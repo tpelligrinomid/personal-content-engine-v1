@@ -11,3 +11,6 @@ export { handleDigestRoute } from './digest';
 export { handleScheduler } from './scheduler';
 export { handleTemplates } from './templates';
 export { handleAdhoc } from './adhoc';
+export { handleAssets } from './assets';
+export { handleDocuments } from './documents';
+export { handleStats } from './stats';

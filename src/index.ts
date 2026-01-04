@@ -8,7 +8,7 @@
  */
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
-import { handleSourceMaterials, handleExtractions, handleExtractionsBatch, handleFireflies, handleVoiceNotes, handleTrends, handleManualNotes, handleGenerate, handleTrendSources, handleCrawl, handleDigestRoute, handleScheduler, handleTemplates, handleAdhoc } from './api';
+import { handleSourceMaterials, handleExtractions, handleExtractionsBatch, handleFireflies, handleVoiceNotes, handleTrends, handleManualNotes, handleGenerate, handleTrendSources, handleCrawl, handleDigestRoute, handleScheduler, handleTemplates, handleAdhoc, handleAssets, handleDocuments, handleStats } from './api';
 import { startScheduler } from './services/scheduler';
 
 const PORT = process.env.PORT || 3000;
@@ -83,6 +83,18 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   if (pathname === '/api/generate/adhoc' && req.method === 'POST') {
     return handleAdhoc(req, res);
+  }
+
+  if (pathname.startsWith('/api/assets')) {
+    return handleAssets(req, res, pathname);
+  }
+
+  if (pathname.startsWith('/api/documents')) {
+    return handleDocuments(req, res, pathname);
+  }
+
+  if (pathname === '/api/stats') {
+    return handleStats(req, res);
   }
 
   // Default response

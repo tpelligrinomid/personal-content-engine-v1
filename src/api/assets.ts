@@ -1,0 +1,267 @@
+/**
+ * Assets API
+ *
+ * GET    /api/assets          - List all assets (filter by type, status)
+ * GET    /api/assets/:id      - Get single asset with inputs
+ * PATCH  /api/assets/:id      - Update asset (status, title, content)
+ * DELETE /api/assets/:id      - Delete asset
+ */
+
+import { IncomingMessage, ServerResponse } from 'http';
+import { getDb } from '../services/db';
+import { Asset } from '../types';
+
+interface ApiResponse<T = unknown> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+
+function parseBody(req: IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk.toString();
+    });
+    req.on('end', () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch {
+        reject(new Error('Invalid JSON'));
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+function sendJson(res: ServerResponse, status: number, data: ApiResponse): void {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(data));
+}
+
+function extractIdFromPath(pathname: string): string | null {
+  const match = pathname.match(/\/api\/assets\/([^/]+)/);
+  return match ? match[1] : null;
+}
+
+function getQueryParams(req: IncomingMessage): URLSearchParams {
+  const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+  return url.searchParams;
+}
+
+async function handleList(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    const params = getQueryParams(req);
+    const type = params.get('type');
+    const status = params.get('status');
+    const limit = parseInt(params.get('limit') || '50', 10);
+    const offset = parseInt(params.get('offset') || '0', 10);
+
+    const db = getDb();
+    let query = db
+      .from('assets')
+      .select('id, type, title, status, publish_date, published_url, created_at, updated_at', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (type) {
+      query = query.eq('type', type);
+    }
+    if (status) {
+      query = query.eq('status', status);
+    }
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      sendJson(res, 500, { success: false, error: error.message });
+      return;
+    }
+
+    sendJson(res, 200, {
+      success: true,
+      data: {
+        assets: data,
+        total: count,
+        limit,
+        offset,
+      },
+    });
+  } catch (err) {
+    console.error('Error listing assets:', err);
+    sendJson(res, 500, {
+      success: false,
+      error: err instanceof Error ? err.message : 'Internal server error',
+    });
+  }
+}
+
+async function handleGet(
+  req: IncomingMessage,
+  res: ServerResponse,
+  id: string
+): Promise<void> {
+  try {
+    const db = getDb();
+
+    // Get asset with inputs
+    const { data: asset, error } = await db
+      .from('assets')
+      .select(`
+        *,
+        asset_inputs (
+          id,
+          note,
+          source_material_id,
+          document_id,
+          source_materials (id, title, type),
+          documents (id, title, url)
+        )
+      `)
+      .eq('id', id)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        sendJson(res, 404, { success: false, error: 'Asset not found' });
+        return;
+      }
+      sendJson(res, 500, { success: false, error: error.message });
+      return;
+    }
+
+    sendJson(res, 200, { success: true, data: asset });
+  } catch (err) {
+    console.error('Error fetching asset:', err);
+    sendJson(res, 500, {
+      success: false,
+      error: err instanceof Error ? err.message : 'Internal server error',
+    });
+  }
+}
+
+async function handleUpdate(
+  req: IncomingMessage,
+  res: ServerResponse,
+  id: string
+): Promise<void> {
+  try {
+    const body = (await parseBody(req)) as Record<string, unknown>;
+
+    // Build update object with only allowed fields
+    const allowedFields = ['status', 'title', 'content', 'publish_date', 'published_url'];
+    const updates: Record<string, unknown> = {};
+
+    for (const field of allowedFields) {
+      if (field in body) {
+        updates[field] = body[field];
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      sendJson(res, 400, {
+        success: false,
+        error: `No valid fields to update. Allowed: ${allowedFields.join(', ')}`,
+      });
+      return;
+    }
+
+    // Validate status if provided
+    if (updates.status) {
+      const validStatuses = ['draft', 'ready', 'published', 'archived'];
+      if (!validStatuses.includes(updates.status as string)) {
+        sendJson(res, 400, {
+          success: false,
+          error: `Invalid status. Must be one of: ${validStatuses.join(', ')}`,
+        });
+        return;
+      }
+    }
+
+    const db = getDb();
+
+    const { data, error } = await db
+      .from('assets')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        sendJson(res, 404, { success: false, error: 'Asset not found' });
+        return;
+      }
+      sendJson(res, 500, { success: false, error: error.message });
+      return;
+    }
+
+    sendJson(res, 200, { success: true, data });
+  } catch (err) {
+    console.error('Error updating asset:', err);
+    sendJson(res, 500, {
+      success: false,
+      error: err instanceof Error ? err.message : 'Internal server error',
+    });
+  }
+}
+
+async function handleDelete(
+  req: IncomingMessage,
+  res: ServerResponse,
+  id: string
+): Promise<void> {
+  try {
+    const db = getDb();
+
+    // Delete asset inputs first (foreign key constraint)
+    await db.from('asset_inputs').delete().eq('asset_id', id);
+
+    // Delete the asset
+    const { error } = await db.from('assets').delete().eq('id', id);
+
+    if (error) {
+      sendJson(res, 500, { success: false, error: error.message });
+      return;
+    }
+
+    sendJson(res, 200, {
+      success: true,
+      data: { message: 'Asset deleted successfully' },
+    });
+  } catch (err) {
+    console.error('Error deleting asset:', err);
+    sendJson(res, 500, {
+      success: false,
+      error: err instanceof Error ? err.message : 'Internal server error',
+    });
+  }
+}
+
+export async function handleAssets(
+  req: IncomingMessage,
+  res: ServerResponse,
+  pathname: string
+): Promise<void> {
+  const id = extractIdFromPath(pathname);
+
+  // List all assets
+  if (pathname === '/api/assets' && req.method === 'GET') {
+    return handleList(req, res);
+  }
+
+  // Single asset operations
+  if (id) {
+    if (req.method === 'GET') {
+      return handleGet(req, res, id);
+    }
+    if (req.method === 'PATCH') {
+      return handleUpdate(req, res, id);
+    }
+    if (req.method === 'DELETE') {
+      return handleDelete(req, res, id);
+    }
+  }
+
+  sendJson(res, 405, { success: false, error: 'Method not allowed' });
+}
