@@ -141,3 +141,20 @@ export type ExtractionInsert = Omit<Extraction, 'id' | 'created_at'> & {
   id?: string;
   created_at?: string;
 };
+
+export interface Template {
+  id: string;
+  template_key: string;
+  name: string;
+  description: string | null;
+  prompt: string;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type TemplateInsert = Omit<Template, 'id' | 'created_at' | 'updated_at'> & {
+  id?: string;
+  created_at?: string;
+  updated_at?: string;
+};

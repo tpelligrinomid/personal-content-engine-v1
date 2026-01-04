@@ -9,3 +9,5 @@ export { handleTrendSources } from './trend-sources';
 export { handleCrawl } from './crawl';
 export { handleDigestRoute } from './digest';
 export { handleScheduler } from './scheduler';
+export { handleTemplates } from './templates';
+export { handleAdhoc } from './adhoc';
