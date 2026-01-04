@@ -44,6 +44,9 @@ interface ExtractionRow {
     title: string | null;
     type: string;
   } | null;
+  documents: {
+    title: string | null;
+  } | null;
 }
 
 async function handleWeekly(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -61,7 +64,8 @@ async function handleWeekly(req: IncomingMessage, res: ServerResponse): Promise<
       .from('extractions')
       .select(`
         *,
-        source_materials (title, type)
+        source_materials (title, type),
+        documents (title)
       `)
       .gte('created_at', since.toISOString())
       .order('created_at', { ascending: false });
@@ -83,8 +87,8 @@ async function handleWeekly(req: IncomingMessage, res: ServerResponse): Promise<
     // Transform for generation
     const extractionsWithSource = (extractions as ExtractionRow[]).map((e) => ({
       ...e,
-      source_title: e.source_materials?.title ?? undefined,
-      source_type: e.source_materials?.type ?? undefined,
+      source_title: e.source_materials?.title ?? e.documents?.title ?? undefined,
+      source_type: e.source_materials?.type ?? (e.document_id ? 'article' : undefined),
     }));
 
     console.log(`Generating weekly content from ${extractions.length} extractions...`);
@@ -92,16 +96,20 @@ async function handleWeekly(req: IncomingMessage, res: ServerResponse): Promise<
     const assets: Asset[] = [];
     const errors: string[] = [];
 
-    // Track source material IDs for provenance
+    // Track source material IDs and document IDs for provenance
     const sourceIds = extractions
       .map((e) => (e as ExtractionRow).source_material_id)
+      .filter((id): id is string => id !== null);
+
+    const documentIds = extractions
+      .map((e) => (e as ExtractionRow).document_id)
       .filter((id): id is string => id !== null);
 
     // Generate newsletter
     try {
       console.log('Generating newsletter...');
       const newsletter = await generateNewsletter(extractionsWithSource);
-      const asset = await saveAsset(db, 'newsletter', newsletter.title, newsletter.content, sourceIds);
+      const asset = await saveAsset(db, 'newsletter', newsletter.title, newsletter.content, sourceIds, documentIds);
       assets.push(asset);
     } catch (err) {
       errors.push(`Newsletter: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -111,7 +119,7 @@ async function handleWeekly(req: IncomingMessage, res: ServerResponse): Promise<
     try {
       console.log('Generating blog post...');
       const blogPost = await generateBlogPost(extractionsWithSource);
-      const asset = await saveAsset(db, 'blog_post', blogPost.title, blogPost.content, sourceIds);
+      const asset = await saveAsset(db, 'blog_post', blogPost.title, blogPost.content, sourceIds, documentIds);
       assets.push(asset);
     } catch (err) {
       errors.push(`Blog post: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -122,7 +130,7 @@ async function handleWeekly(req: IncomingMessage, res: ServerResponse): Promise<
       console.log('Generating LinkedIn posts...');
       const linkedInPosts = await generateLinkedInPosts(extractionsWithSource);
       for (const post of linkedInPosts) {
-        const asset = await saveAsset(db, 'linkedin_post', post.title, post.content, sourceIds);
+        const asset = await saveAsset(db, 'linkedin_post', post.title, post.content, sourceIds, documentIds);
         assets.push(asset);
       }
     } catch (err) {
@@ -134,7 +142,7 @@ async function handleWeekly(req: IncomingMessage, res: ServerResponse): Promise<
       console.log('Generating Twitter posts...');
       const twitterPosts = await generateTwitterPosts(extractionsWithSource);
       for (const post of twitterPosts) {
-        const asset = await saveAsset(db, 'twitter_post', post.title, post.content, sourceIds);
+        const asset = await saveAsset(db, 'twitter_post', post.title, post.content, sourceIds, documentIds);
         assets.push(asset);
       }
     } catch (err) {
@@ -166,7 +174,8 @@ async function saveAsset(
   type: 'newsletter' | 'blog_post' | 'linkedin_post' | 'twitter_post',
   title: string,
   content: string,
-  sourceIds: string[]
+  sourceIds: string[],
+  documentIds: string[]
 ): Promise<Asset> {
   const insert: AssetInsert = {
     type,
@@ -189,16 +198,28 @@ async function saveAsset(
 
   const asset = data as Asset;
 
-  // Create provenance links
+  // Create provenance links for source materials
   if (sourceIds.length > 0) {
-    const inputs: AssetInputInsert[] = sourceIds.map((smId) => ({
+    const smInputs: AssetInputInsert[] = sourceIds.map((smId) => ({
       asset_id: asset.id,
       source_material_id: smId,
       document_id: null,
       note: null,
     }));
 
-    await db.from('asset_inputs').insert(inputs);
+    await db.from('asset_inputs').insert(smInputs);
+  }
+
+  // Create provenance links for documents
+  if (documentIds.length > 0) {
+    const docInputs: AssetInputInsert[] = documentIds.map((docId) => ({
+      asset_id: asset.id,
+      source_material_id: null,
+      document_id: docId,
+      note: null,
+    }));
+
+    await db.from('asset_inputs').insert(docInputs);
   }
 
   return asset;

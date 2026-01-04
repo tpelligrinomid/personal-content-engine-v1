@@ -166,90 +166,132 @@ async function handleBatch(req: IncomingMessage, res: ServerResponse): Promise<v
   try {
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
     const limit = parseInt(url.searchParams.get('limit') ?? '0', 10);
+    const source = url.searchParams.get('source') || 'all'; // 'source_materials', 'documents', or 'all'
 
     const db = getDb();
-
-    // Get all source materials
-    const { data: sourceMaterials, error: smError } = await db
-      .from('source_materials')
-      .select('id, type, content, title')
-      .order('created_at', { ascending: true });
-
-    if (smError) {
-      sendJson(res, 500, { success: false, error: 'Failed to fetch source materials' });
-      return;
-    }
-
-    if (!sourceMaterials || sourceMaterials.length === 0) {
-      sendJson(res, 200, {
-        success: true,
-        data: { processed: 0, skipped: 0, errors: [], message: 'No source materials found' },
-      });
-      return;
-    }
-
-    // Get existing extractions
-    const { data: existingExtractions } = await db
-      .from('extractions')
-      .select('source_material_id');
-
-    const existingIds = new Set(
-      (existingExtractions ?? []).map((e: { source_material_id: string | null }) => e.source_material_id)
-    );
-
-    // Filter to unprocessed
-    let toProcess = (sourceMaterials as SourceMaterial[]).filter((sm) => !existingIds.has(sm.id));
-
-    if (toProcess.length === 0) {
-      sendJson(res, 200, {
-        success: true,
-        data: {
-          processed: 0,
-          skipped: sourceMaterials.length,
-          errors: [],
-          message: 'All source materials already have extractions',
-        },
-      });
-      return;
-    }
-
-    const remaining = toProcess.length;
-    if (limit > 0 && toProcess.length > limit) {
-      toProcess = toProcess.slice(0, limit);
-    }
-
-    console.log(`Batch extracting ${toProcess.length} source materials (${remaining} total remaining)...`);
-
     const results: Extraction[] = [];
     const errors: string[] = [];
+    let totalRemaining = 0;
+    let totalSkipped = 0;
 
-    for (const sm of toProcess) {
-      try {
-        console.log(`Extracting: ${sm.title} (${sm.type}, ${sm.content.length} chars)`);
-        const extractionResult = await extractFromContent(sm.content, sm.type);
+    // Process source materials
+    if (source === 'all' || source === 'source_materials') {
+      const { data: sourceMaterials } = await db
+        .from('source_materials')
+        .select('id, type, content, title')
+        .order('created_at', { ascending: true });
 
-        const insert: ExtractionInsert = {
-          source_material_id: sm.id,
-          document_id: null,
-          summary: extractionResult.summary,
-          key_points: extractionResult.key_points,
-          topics: extractionResult.topics,
-          model: EXTRACTION_MODEL,
-        };
+      const { data: existingSM } = await db
+        .from('extractions')
+        .select('source_material_id')
+        .not('source_material_id', 'is', null);
 
-        const { data, error } = await db
-          .from('extractions')
-          .insert(insert)
-          .select()
-          .single();
+      const existingSmIds = new Set(
+        (existingSM ?? []).map((e: { source_material_id: string | null }) => e.source_material_id)
+      );
 
-        if (error) {
-          errors.push(`${sm.title}: ${error.message}`);
-        } else {
-          results.push(data as Extraction);
+      let smToProcess = (sourceMaterials ?? []).filter(
+        (sm: { id: string }) => !existingSmIds.has(sm.id)
+      );
+
+      totalSkipped += existingSmIds.size;
+      totalRemaining += smToProcess.length;
+
+      if (limit > 0 && smToProcess.length > limit) {
+        smToProcess = smToProcess.slice(0, limit);
+      }
+
+      for (const sm of smToProcess as SourceMaterial[]) {
+        try {
+          console.log(`Extracting source material: ${sm.title} (${sm.type})`);
+          const extractionResult = await extractFromContent(sm.content, sm.type);
+
+          const insert: ExtractionInsert = {
+            source_material_id: sm.id,
+            document_id: null,
+            summary: extractionResult.summary,
+            key_points: extractionResult.key_points,
+            topics: extractionResult.topics,
+            model: EXTRACTION_MODEL,
+          };
+
+          const { data, error } = await db
+            .from('extractions')
+            .insert(insert)
+            .select()
+            .single();
+
+          if (error) {
+            errors.push(`[SM] ${sm.title}: ${error.message}`);
+          } else {
+            results.push(data as Extraction);
+          }
+        } catch (err) {
+          errors.push(`[SM] ${sm.title}: ${err instanceof Error ? err.message : 'Unknown error'}`);
         }
-      } catch (err) {
-        errors.push(`${sm.title}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
+    }
+
+    // Process documents
+    if (source === 'all' || source === 'documents') {
+      const { data: documents } = await db
+        .from('documents')
+        .select('id, title, raw_text')
+        .eq('status', 'parsed')
+        .not('raw_text', 'is', null)
+        .order('created_at', { ascending: true });
+
+      const { data: existingDocs } = await db
+        .from('extractions')
+        .select('document_id')
+        .not('document_id', 'is', null);
+
+      const existingDocIds = new Set(
+        (existingDocs ?? []).map((e: { document_id: string | null }) => e.document_id)
+      );
+
+      let docsToProcess = (documents ?? []).filter(
+        (doc: { id: string }) => !existingDocIds.has(doc.id)
+      );
+
+      totalSkipped += existingDocIds.size;
+      totalRemaining += docsToProcess.length;
+
+      const remainingLimit = limit > 0 ? limit - results.length : 0;
+      if (remainingLimit > 0 && docsToProcess.length > remainingLimit) {
+        docsToProcess = docsToProcess.slice(0, remainingLimit);
+      } else if (limit > 0 && results.length >= limit) {
+        docsToProcess = [];
+      }
+
+      for (const doc of docsToProcess as { id: string; title: string | null; raw_text: string }[]) {
+        try {
+          console.log(`Extracting document: ${doc.title || doc.id}`);
+          const extractionResult = await extractFromContent(doc.raw_text, 'document');
+
+          const insert: ExtractionInsert = {
+            source_material_id: null,
+            document_id: doc.id,
+            summary: extractionResult.summary,
+            key_points: extractionResult.key_points,
+            topics: extractionResult.topics,
+            model: EXTRACTION_MODEL,
+          };
+
+          const { data, error } = await db
+            .from('extractions')
+            .insert(insert)
+            .select()
+            .single();
+
+          if (error) {
+            errors.push(`[Doc] ${doc.title || doc.id}: ${error.message}`);
+          } else {
+            results.push(data as Extraction);
+          }
+        } catch (err) {
+          errors.push(`[Doc] ${doc.title || doc.id}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        }
       }
     }
 
@@ -257,8 +299,8 @@ async function handleBatch(req: IncomingMessage, res: ServerResponse): Promise<v
       success: true,
       data: {
         processed: results.length,
-        remaining: remaining - results.length,
-        skipped: existingIds.size,
+        remaining: totalRemaining - results.length,
+        skipped: totalSkipped,
         errors,
         extractions: results,
       },

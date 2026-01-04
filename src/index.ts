@@ -8,7 +8,7 @@
  */
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
-import { handleSourceMaterials, handleExtractions, handleExtractionsBatch, handleFireflies, handleVoiceNotes, handleTrends, handleManualNotes, handleGenerate } from './api';
+import { handleSourceMaterials, handleExtractions, handleExtractionsBatch, handleFireflies, handleVoiceNotes, handleTrends, handleManualNotes, handleGenerate, handleTrendSources, handleCrawl } from './api';
 
 // TODO: Set up scheduled jobs for weekly batch generation
 
@@ -60,6 +60,14 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   if (pathname.startsWith('/api/generate/')) {
     return handleGenerate(req, res, pathname);
+  }
+
+  if (pathname.startsWith('/api/trend-sources')) {
+    return handleTrendSources(req, res, pathname);
+  }
+
+  if (pathname.startsWith('/api/crawl/')) {
+    return handleCrawl(req, res, pathname);
   }
 
   // Default response
