@@ -8,7 +8,7 @@
  */
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
-import { handleSourceMaterials, handleExtractions, handleFireflies } from './api';
+import { handleSourceMaterials, handleExtractions, handleFireflies, handleVoiceNotes } from './api';
 
 // TODO: Set up scheduled jobs for weekly batch generation
 
@@ -40,6 +40,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   if (pathname === '/api/ingest/fireflies') {
     return handleFireflies(req, res);
+  }
+
+  if (pathname === '/api/ingest/voice-note') {
+    return handleVoiceNotes(req, res);
   }
 
   // Default response
