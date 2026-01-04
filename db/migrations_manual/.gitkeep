@@ -1,0 +1,7 @@
+# This directory contains SQL files for manual Supabase schema changes.
+#
+# Naming convention: YYYYMMDD_NN_description.sql
+# Example: 20240115_01_create_assets_table.sql
+#
+# Each file should contain the SQL executed in Supabase.
+# Always update docs/schema.md when adding a migration.
