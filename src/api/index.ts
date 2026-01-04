@@ -7,3 +7,4 @@ export { handleManualNotes } from './manual-notes';
 export { handleGenerate } from './generate';
 export { handleTrendSources } from './trend-sources';
 export { handleCrawl } from './crawl';
+export { handleDigestRoute } from './digest';

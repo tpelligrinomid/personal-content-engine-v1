@@ -8,7 +8,7 @@
  */
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
-import { handleSourceMaterials, handleExtractions, handleExtractionsBatch, handleFireflies, handleVoiceNotes, handleTrends, handleManualNotes, handleGenerate, handleTrendSources, handleCrawl } from './api';
+import { handleSourceMaterials, handleExtractions, handleExtractionsBatch, handleFireflies, handleVoiceNotes, handleTrends, handleManualNotes, handleGenerate, handleTrendSources, handleCrawl, handleDigestRoute } from './api';
 
 // TODO: Set up scheduled jobs for weekly batch generation
 
@@ -68,6 +68,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   if (pathname.startsWith('/api/crawl/')) {
     return handleCrawl(req, res, pathname);
+  }
+
+  if (pathname === '/api/digest') {
+    return handleDigestRoute(req, res);
   }
 
   // Default response
