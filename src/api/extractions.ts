@@ -164,6 +164,9 @@ async function handleCreate(req: IncomingMessage, res: ServerResponse): Promise<
 
 async function handleBatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
+    const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+    const limit = parseInt(url.searchParams.get('limit') ?? '0', 10);
+
     const db = getDb();
 
     // Get all source materials
@@ -195,7 +198,7 @@ async function handleBatch(req: IncomingMessage, res: ServerResponse): Promise<v
     );
 
     // Filter to unprocessed
-    const toProcess = (sourceMaterials as SourceMaterial[]).filter((sm) => !existingIds.has(sm.id));
+    let toProcess = (sourceMaterials as SourceMaterial[]).filter((sm) => !existingIds.has(sm.id));
 
     if (toProcess.length === 0) {
       sendJson(res, 200, {
@@ -210,7 +213,12 @@ async function handleBatch(req: IncomingMessage, res: ServerResponse): Promise<v
       return;
     }
 
-    console.log(`Batch extracting ${toProcess.length} source materials...`);
+    const remaining = toProcess.length;
+    if (limit > 0 && toProcess.length > limit) {
+      toProcess = toProcess.slice(0, limit);
+    }
+
+    console.log(`Batch extracting ${toProcess.length} source materials (${remaining} total remaining)...`);
 
     const results: Extraction[] = [];
     const errors: string[] = [];
@@ -249,6 +257,7 @@ async function handleBatch(req: IncomingMessage, res: ServerResponse): Promise<v
       success: true,
       data: {
         processed: results.length,
+        remaining: remaining - results.length,
         skipped: existingIds.size,
         errors,
         extractions: results,
