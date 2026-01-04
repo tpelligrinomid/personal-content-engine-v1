@@ -8,7 +8,7 @@
  */
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
-import { handleSourceMaterials, handleExtractions, handleExtractionsBatch, handleFireflies, handleVoiceNotes, handleTrends, handleManualNotes } from './api';
+import { handleSourceMaterials, handleExtractions, handleExtractionsBatch, handleFireflies, handleVoiceNotes, handleTrends, handleManualNotes, handleGenerate } from './api';
 
 // TODO: Set up scheduled jobs for weekly batch generation
 
@@ -56,6 +56,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   if (pathname === '/api/ingest/manual-note') {
     return handleManualNotes(req, res);
+  }
+
+  if (pathname.startsWith('/api/generate/')) {
+    return handleGenerate(req, res, pathname);
   }
 
   // Default response

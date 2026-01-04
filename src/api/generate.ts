@@ -1,0 +1,217 @@
+/**
+ * Content Generation API
+ *
+ * POST /api/generate/weekly - Generate weekly content batch
+ *
+ * Gathers recent extractions and generates:
+ * - 1 newsletter
+ * - 1 blog post
+ * - 5-6 LinkedIn posts
+ * - 5-6 Twitter posts
+ */
+
+import { IncomingMessage, ServerResponse } from 'http';
+import { getDb } from '../services/db';
+import {
+  generateNewsletter,
+  generateBlogPost,
+  generateLinkedInPosts,
+  generateTwitterPosts,
+} from '../services/generate';
+import { Asset, AssetInsert, AssetInputInsert } from '../types';
+
+interface ApiResponse<T = unknown> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+
+function sendJson(res: ServerResponse, status: number, data: ApiResponse): void {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(data));
+}
+
+interface ExtractionRow {
+  id: string;
+  source_material_id: string | null;
+  document_id: string | null;
+  summary: string | null;
+  key_points: string[] | null;
+  topics: string[] | null;
+  model: string | null;
+  created_at: string;
+  source_materials: {
+    title: string | null;
+    type: string;
+  } | null;
+}
+
+async function handleWeekly(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+    const daysBack = parseInt(url.searchParams.get('days') ?? '7', 10);
+
+    const db = getDb();
+
+    // Get extractions from the last N days with source material info
+    const since = new Date();
+    since.setDate(since.getDate() - daysBack);
+
+    const { data: extractions, error: fetchError } = await db
+      .from('extractions')
+      .select(`
+        *,
+        source_materials (title, type)
+      `)
+      .gte('created_at', since.toISOString())
+      .order('created_at', { ascending: false });
+
+    if (fetchError) {
+      console.error('Failed to fetch extractions:', fetchError);
+      sendJson(res, 500, { success: false, error: 'Failed to fetch extractions' });
+      return;
+    }
+
+    if (!extractions || extractions.length === 0) {
+      sendJson(res, 400, {
+        success: false,
+        error: `No extractions found in the last ${daysBack} days`,
+      });
+      return;
+    }
+
+    // Transform for generation
+    const extractionsWithSource = (extractions as ExtractionRow[]).map((e) => ({
+      ...e,
+      source_title: e.source_materials?.title ?? undefined,
+      source_type: e.source_materials?.type ?? undefined,
+    }));
+
+    console.log(`Generating weekly content from ${extractions.length} extractions...`);
+
+    const assets: Asset[] = [];
+    const errors: string[] = [];
+
+    // Track source material IDs for provenance
+    const sourceIds = extractions
+      .map((e) => (e as ExtractionRow).source_material_id)
+      .filter((id): id is string => id !== null);
+
+    // Generate newsletter
+    try {
+      console.log('Generating newsletter...');
+      const newsletter = await generateNewsletter(extractionsWithSource);
+      const asset = await saveAsset(db, 'newsletter', newsletter.title, newsletter.content, sourceIds);
+      assets.push(asset);
+    } catch (err) {
+      errors.push(`Newsletter: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+
+    // Generate blog post
+    try {
+      console.log('Generating blog post...');
+      const blogPost = await generateBlogPost(extractionsWithSource);
+      const asset = await saveAsset(db, 'blog_post', blogPost.title, blogPost.content, sourceIds);
+      assets.push(asset);
+    } catch (err) {
+      errors.push(`Blog post: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+
+    // Generate LinkedIn posts
+    try {
+      console.log('Generating LinkedIn posts...');
+      const linkedInPosts = await generateLinkedInPosts(extractionsWithSource);
+      for (const post of linkedInPosts) {
+        const asset = await saveAsset(db, 'linkedin_post', post.title, post.content, sourceIds);
+        assets.push(asset);
+      }
+    } catch (err) {
+      errors.push(`LinkedIn posts: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+
+    // Generate Twitter posts
+    try {
+      console.log('Generating Twitter posts...');
+      const twitterPosts = await generateTwitterPosts(extractionsWithSource);
+      for (const post of twitterPosts) {
+        const asset = await saveAsset(db, 'twitter_post', post.title, post.content, sourceIds);
+        assets.push(asset);
+      }
+    } catch (err) {
+      errors.push(`Twitter posts: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    }
+
+    console.log(`Generated ${assets.length} assets`);
+
+    sendJson(res, 201, {
+      success: true,
+      data: {
+        generated: assets.length,
+        extractions_used: extractions.length,
+        errors: errors.length > 0 ? errors : undefined,
+        assets,
+      },
+    });
+  } catch (err) {
+    console.error('Error generating weekly content:', err);
+    sendJson(res, 500, {
+      success: false,
+      error: err instanceof Error ? err.message : 'Internal server error',
+    });
+  }
+}
+
+async function saveAsset(
+  db: ReturnType<typeof getDb>,
+  type: 'newsletter' | 'blog_post' | 'linkedin_post' | 'twitter_post',
+  title: string,
+  content: string,
+  sourceIds: string[]
+): Promise<Asset> {
+  const insert: AssetInsert = {
+    type,
+    title,
+    content,
+    status: 'draft',
+    publish_date: null,
+    published_url: null,
+  };
+
+  const { data, error } = await db
+    .from('assets')
+    .insert(insert)
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(`Failed to save ${type}: ${error.message}`);
+  }
+
+  const asset = data as Asset;
+
+  // Create provenance links
+  if (sourceIds.length > 0) {
+    const inputs: AssetInputInsert[] = sourceIds.map((smId) => ({
+      asset_id: asset.id,
+      source_material_id: smId,
+      document_id: null,
+      note: null,
+    }));
+
+    await db.from('asset_inputs').insert(inputs);
+  }
+
+  return asset;
+}
+
+export async function handleGenerate(
+  req: IncomingMessage,
+  res: ServerResponse,
+  pathname: string
+): Promise<void> {
+  if (pathname === '/api/generate/weekly' && req.method === 'POST') {
+    return handleWeekly(req, res);
+  }
+
+  sendJson(res, 404, { success: false, error: 'Not found' });
+}
