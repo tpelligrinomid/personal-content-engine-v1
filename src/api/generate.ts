@@ -1,7 +1,8 @@
 /**
  * Content Generation API
  *
- * POST /api/generate/weekly - Generate weekly content batch
+ * POST /api/generate/weekly - Generate weekly content batch (runs in background)
+ * GET /api/generate/status - Check generation status
  *
  * Gathers recent extractions and generates:
  * - 1 newsletter
@@ -49,124 +50,165 @@ interface ExtractionRow {
   } | null;
 }
 
+// Generation state
+let isGenerating = false;
+let lastGenerationResult: {
+  completedAt: string;
+  generated: number;
+  errors: string[];
+} | null = null;
+
+async function runGeneration(daysBack: number): Promise<void> {
+  const db = getDb();
+
+  // Get extractions from the last N days with source material info
+  const since = new Date();
+  since.setDate(since.getDate() - daysBack);
+
+  const { data: extractions, error: fetchError } = await db
+    .from('extractions')
+    .select(`
+      *,
+      source_materials (title, type),
+      documents (title)
+    `)
+    .gte('created_at', since.toISOString())
+    .order('created_at', { ascending: false });
+
+  if (fetchError) {
+    throw new Error(`Failed to fetch extractions: ${fetchError.message}`);
+  }
+
+  if (!extractions || extractions.length === 0) {
+    throw new Error(`No extractions found in the last ${daysBack} days`);
+  }
+
+  // Transform for generation
+  const extractionsWithSource = (extractions as ExtractionRow[]).map((e) => ({
+    ...e,
+    source_title: e.source_materials?.title ?? e.documents?.title ?? undefined,
+    source_type: e.source_materials?.type ?? (e.document_id ? 'article' : undefined),
+  }));
+
+  console.log(`[Generate] Creating content from ${extractions.length} extractions...`);
+
+  const assets: Asset[] = [];
+  const errors: string[] = [];
+
+  // Track source material IDs and document IDs for provenance
+  const sourceIds = extractions
+    .map((e) => (e as ExtractionRow).source_material_id)
+    .filter((id): id is string => id !== null);
+
+  const documentIds = extractions
+    .map((e) => (e as ExtractionRow).document_id)
+    .filter((id): id is string => id !== null);
+
+  // Generate newsletter
+  try {
+    console.log('[Generate] Creating newsletter...');
+    const newsletter = await generateNewsletter(extractionsWithSource);
+    const asset = await saveAsset(db, 'newsletter', newsletter.title, newsletter.content, sourceIds, documentIds);
+    assets.push(asset);
+  } catch (err) {
+    errors.push(`Newsletter: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  }
+
+  // Generate blog post
+  try {
+    console.log('[Generate] Creating blog post...');
+    const blogPost = await generateBlogPost(extractionsWithSource);
+    const asset = await saveAsset(db, 'blog_post', blogPost.title, blogPost.content, sourceIds, documentIds);
+    assets.push(asset);
+  } catch (err) {
+    errors.push(`Blog post: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  }
+
+  // Generate LinkedIn posts
+  try {
+    console.log('[Generate] Creating LinkedIn posts...');
+    const linkedInPosts = await generateLinkedInPosts(extractionsWithSource);
+    for (const post of linkedInPosts) {
+      const asset = await saveAsset(db, 'linkedin_post', post.title, post.content, sourceIds, documentIds);
+      assets.push(asset);
+    }
+  } catch (err) {
+    errors.push(`LinkedIn posts: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  }
+
+  // Generate Twitter posts
+  try {
+    console.log('[Generate] Creating Twitter posts...');
+    const twitterPosts = await generateTwitterPosts(extractionsWithSource);
+    for (const post of twitterPosts) {
+      const asset = await saveAsset(db, 'twitter_post', post.title, post.content, sourceIds, documentIds);
+      assets.push(asset);
+    }
+  } catch (err) {
+    errors.push(`Twitter posts: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  }
+
+  console.log(`[Generate] Complete: ${assets.length} assets created`);
+
+  lastGenerationResult = {
+    completedAt: new Date().toISOString(),
+    generated: assets.length,
+    errors,
+  };
+}
+
 async function handleWeekly(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
+    if (isGenerating) {
+      sendJson(res, 409, { success: false, error: 'Generation already in progress' });
+      return;
+    }
+
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
     const daysBack = parseInt(url.searchParams.get('days') ?? '7', 10);
 
-    const db = getDb();
+    isGenerating = true;
 
-    // Get extractions from the last N days with source material info
-    const since = new Date();
-    since.setDate(since.getDate() - daysBack);
-
-    const { data: extractions, error: fetchError } = await db
-      .from('extractions')
-      .select(`
-        *,
-        source_materials (title, type),
-        documents (title)
-      `)
-      .gte('created_at', since.toISOString())
-      .order('created_at', { ascending: false });
-
-    if (fetchError) {
-      console.error('Failed to fetch extractions:', fetchError);
-      sendJson(res, 500, { success: false, error: 'Failed to fetch extractions' });
-      return;
-    }
-
-    if (!extractions || extractions.length === 0) {
-      sendJson(res, 400, {
-        success: false,
-        error: `No extractions found in the last ${daysBack} days`,
+    // Run in background - don't await
+    runGeneration(daysBack)
+      .catch((err) => {
+        console.error('[Generate] Failed:', err);
+        lastGenerationResult = {
+          completedAt: new Date().toISOString(),
+          generated: 0,
+          errors: [err instanceof Error ? err.message : 'Unknown error'],
+        };
+      })
+      .finally(() => {
+        isGenerating = false;
       });
-      return;
-    }
 
-    // Transform for generation
-    const extractionsWithSource = (extractions as ExtractionRow[]).map((e) => ({
-      ...e,
-      source_title: e.source_materials?.title ?? e.documents?.title ?? undefined,
-      source_type: e.source_materials?.type ?? (e.document_id ? 'article' : undefined),
-    }));
-
-    console.log(`Generating weekly content from ${extractions.length} extractions...`);
-
-    const assets: Asset[] = [];
-    const errors: string[] = [];
-
-    // Track source material IDs and document IDs for provenance
-    const sourceIds = extractions
-      .map((e) => (e as ExtractionRow).source_material_id)
-      .filter((id): id is string => id !== null);
-
-    const documentIds = extractions
-      .map((e) => (e as ExtractionRow).document_id)
-      .filter((id): id is string => id !== null);
-
-    // Generate newsletter
-    try {
-      console.log('Generating newsletter...');
-      const newsletter = await generateNewsletter(extractionsWithSource);
-      const asset = await saveAsset(db, 'newsletter', newsletter.title, newsletter.content, sourceIds, documentIds);
-      assets.push(asset);
-    } catch (err) {
-      errors.push(`Newsletter: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    }
-
-    // Generate blog post
-    try {
-      console.log('Generating blog post...');
-      const blogPost = await generateBlogPost(extractionsWithSource);
-      const asset = await saveAsset(db, 'blog_post', blogPost.title, blogPost.content, sourceIds, documentIds);
-      assets.push(asset);
-    } catch (err) {
-      errors.push(`Blog post: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    }
-
-    // Generate LinkedIn posts
-    try {
-      console.log('Generating LinkedIn posts...');
-      const linkedInPosts = await generateLinkedInPosts(extractionsWithSource);
-      for (const post of linkedInPosts) {
-        const asset = await saveAsset(db, 'linkedin_post', post.title, post.content, sourceIds, documentIds);
-        assets.push(asset);
-      }
-    } catch (err) {
-      errors.push(`LinkedIn posts: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    }
-
-    // Generate Twitter posts
-    try {
-      console.log('Generating Twitter posts...');
-      const twitterPosts = await generateTwitterPosts(extractionsWithSource);
-      for (const post of twitterPosts) {
-        const asset = await saveAsset(db, 'twitter_post', post.title, post.content, sourceIds, documentIds);
-        assets.push(asset);
-      }
-    } catch (err) {
-      errors.push(`Twitter posts: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    }
-
-    console.log(`Generated ${assets.length} assets`);
-
-    sendJson(res, 201, {
+    sendJson(res, 202, {
       success: true,
       data: {
-        generated: assets.length,
-        extractions_used: extractions.length,
-        errors: errors.length > 0 ? errors : undefined,
-        assets,
+        message: 'Generation started in background',
+        status: 'running',
+        daysBack,
       },
     });
   } catch (err) {
-    console.error('Error generating weekly content:', err);
+    console.error('Error starting generation:', err);
+    isGenerating = false;
     sendJson(res, 500, {
       success: false,
       error: err instanceof Error ? err.message : 'Internal server error',
     });
   }
+}
+
+async function handleStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  sendJson(res, 200, {
+    success: true,
+    data: {
+      isGenerating,
+      lastResult: lastGenerationResult,
+    },
+  });
 }
 
 async function saveAsset(
@@ -232,6 +274,10 @@ export async function handleGenerate(
 ): Promise<void> {
   if (pathname === '/api/generate/weekly' && req.method === 'POST') {
     return handleWeekly(req, res);
+  }
+
+  if (pathname === '/api/generate/status' && req.method === 'GET') {
+    return handleStatus(req, res);
   }
 
   sendJson(res, 404, { success: false, error: 'Not found' });
