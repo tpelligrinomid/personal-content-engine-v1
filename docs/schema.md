@@ -8,9 +8,9 @@ Schema changes are made manually in Supabase and documented here immediately. Ea
 
 **Data Flow:**
 ```
-Trend Sources → Documents ─┐
-                           ├→ Asset Inputs → Assets
-Source Materials ──────────┘
+Trend Sources → Documents ──┐
+                            ├→ Extractions → Asset Inputs → Assets
+Source Materials ───────────┘
 ```
 
 ---
@@ -120,6 +120,27 @@ Internal inputs: meeting transcripts, voice notes, manual notes.
 
 ---
 
+### `extractions`
+
+LLM-extracted summaries and key points from source materials and documents.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `id` | uuid | no | Primary key |
+| `source_material_id` | uuid | yes | FK to source_materials (cascade delete) |
+| `document_id` | uuid | yes | FK to documents (cascade delete) |
+| `summary` | text | yes | Condensed summary of the content |
+| `key_points` | text[] | yes | Array of key points/bullets |
+| `topics` | text[] | yes | Extracted topics/themes |
+| `model` | text | yes | Model used for extraction (e.g., claude-sonnet-4-20250514) |
+| `created_at` | timestamptz | no | Row created |
+
+**Constraint:** At least one of source_material_id or document_id must be set.
+
+**Indexes:** source_material_id, document_id
+
+---
+
 ### `tags`
 
 Normalized tags for filtering and reporting.
@@ -199,3 +220,4 @@ Automatically updates `updated_at` on row modification for:
 | Date | Change | Migration File |
 |------|--------|----------------|
 | 2025-01-03 | Initial schema: 7 tables, 6 enums | `20250103_01_initial_schema.sql` |
+| 2025-01-04 | Add extractions table for LLM summaries | `20250104_01_add_extractions_table.sql` |

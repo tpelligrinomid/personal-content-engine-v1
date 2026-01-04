@@ -89,6 +89,17 @@ export interface AssetInput {
   created_at: string;
 }
 
+export interface Extraction {
+  id: string;
+  source_material_id: string | null;
+  document_id: string | null;
+  summary: string | null;
+  key_points: string[] | null;
+  topics: string[] | null;
+  model: string | null;
+  created_at: string;
+}
+
 // ============================================
 // INSERT TYPES (omit auto-generated fields)
 // ============================================
@@ -122,6 +133,11 @@ export type AssetInsert = Omit<Asset, 'id' | 'created_at' | 'updated_at'> & {
 };
 
 export type AssetInputInsert = Omit<AssetInput, 'id' | 'created_at'> & {
+  id?: string;
+  created_at?: string;
+};
+
+export type ExtractionInsert = Omit<Extraction, 'id' | 'created_at'> & {
   id?: string;
   created_at?: string;
 };

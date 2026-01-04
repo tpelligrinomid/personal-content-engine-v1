@@ -8,7 +8,7 @@
  */
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
-import { handleSourceMaterials } from './api';
+import { handleSourceMaterials, handleExtractions } from './api';
 
 // TODO: Set up scheduled jobs for weekly batch generation
 
@@ -32,6 +32,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   // API routes
   if (pathname === '/api/source-materials') {
     return handleSourceMaterials(req, res);
+  }
+
+  if (pathname === '/api/extractions') {
+    return handleExtractions(req, res);
   }
 
   // Default response
