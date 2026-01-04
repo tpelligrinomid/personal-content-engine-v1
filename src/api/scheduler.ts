@@ -1,0 +1,73 @@
+/**
+ * Scheduler API
+ *
+ * GET /api/scheduler/status - Check scheduler status
+ * POST /api/scheduler/trigger - Manually trigger a run
+ */
+
+import { IncomingMessage, ServerResponse } from 'http';
+import { getSchedulerStatus, triggerManualRun } from '../services/scheduler';
+
+interface ApiResponse<T = unknown> {
+  success: boolean;
+  data?: T;
+  error?: string;
+}
+
+function sendJson(res: ServerResponse, status: number, data: ApiResponse): void {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(data));
+}
+
+async function handleStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const status = getSchedulerStatus();
+  sendJson(res, 200, { success: true, data: status });
+}
+
+async function handleTrigger(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    // Start the job but don't wait for it - return immediately
+    const status = getSchedulerStatus();
+
+    if (status.isRunning) {
+      sendJson(res, 409, { success: false, error: 'Job already running' });
+      return;
+    }
+
+    // Trigger async - don't await
+    triggerManualRun()
+      .then((result) => {
+        console.log('[Scheduler API] Manual run completed:', result);
+      })
+      .catch((err) => {
+        console.error('[Scheduler API] Manual run failed:', err);
+      });
+
+    sendJson(res, 202, {
+      success: true,
+      data: { message: 'Job started in background', status: 'running' },
+    });
+  } catch (err) {
+    console.error('Error triggering scheduler:', err);
+    sendJson(res, 500, {
+      success: false,
+      error: err instanceof Error ? err.message : 'Internal server error',
+    });
+  }
+}
+
+export async function handleScheduler(
+  req: IncomingMessage,
+  res: ServerResponse,
+  pathname: string
+): Promise<void> {
+  if (pathname === '/api/scheduler/status' && req.method === 'GET') {
+    return handleStatus(req, res);
+  }
+
+  if (pathname === '/api/scheduler/trigger' && req.method === 'POST') {
+    return handleTrigger(req, res);
+  }
+
+  sendJson(res, 404, { success: false, error: 'Not found' });
+}

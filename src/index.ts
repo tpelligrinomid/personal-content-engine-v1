@@ -8,9 +8,8 @@
  */
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
-import { handleSourceMaterials, handleExtractions, handleExtractionsBatch, handleFireflies, handleVoiceNotes, handleTrends, handleManualNotes, handleGenerate, handleTrendSources, handleCrawl, handleDigestRoute } from './api';
-
-// TODO: Set up scheduled jobs for weekly batch generation
+import { handleSourceMaterials, handleExtractions, handleExtractionsBatch, handleFireflies, handleVoiceNotes, handleTrends, handleManualNotes, handleGenerate, handleTrendSources, handleCrawl, handleDigestRoute, handleScheduler } from './api';
+import { startScheduler } from './services/scheduler';
 
 const PORT = process.env.PORT || 3000;
 
@@ -74,6 +73,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     return handleDigestRoute(req, res);
   }
 
+  if (pathname.startsWith('/api/scheduler/')) {
+    return handleScheduler(req, res, pathname);
+  }
+
   // Default response
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ service: 'personal-content-engine', status: 'running' }));
@@ -92,6 +95,9 @@ async function main() {
 
   server.listen(PORT, () => {
     console.log(`Engine running on port ${PORT}`);
+
+    // Start the background scheduler
+    startScheduler();
   });
 }
 
