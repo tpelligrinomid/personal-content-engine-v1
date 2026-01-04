@@ -1,5 +1,5 @@
 export { handleSourceMaterials } from './source-materials';
-export { handleExtractions } from './extractions';
+export { handleExtractions, handleExtractionsBatch } from './extractions';
 export { handleFireflies } from './fireflies';
 export { handleVoiceNotes } from './voice-notes';
 export { handleTrends } from './trends';

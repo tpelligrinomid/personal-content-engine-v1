@@ -162,6 +162,107 @@ async function handleCreate(req: IncomingMessage, res: ServerResponse): Promise<
   }
 }
 
+async function handleBatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    const db = getDb();
+
+    // Get all source materials
+    const { data: sourceMaterials, error: smError } = await db
+      .from('source_materials')
+      .select('id, type, content, title')
+      .order('created_at', { ascending: true });
+
+    if (smError) {
+      sendJson(res, 500, { success: false, error: 'Failed to fetch source materials' });
+      return;
+    }
+
+    if (!sourceMaterials || sourceMaterials.length === 0) {
+      sendJson(res, 200, {
+        success: true,
+        data: { processed: 0, skipped: 0, errors: [], message: 'No source materials found' },
+      });
+      return;
+    }
+
+    // Get existing extractions
+    const { data: existingExtractions } = await db
+      .from('extractions')
+      .select('source_material_id');
+
+    const existingIds = new Set(
+      (existingExtractions ?? []).map((e: { source_material_id: string | null }) => e.source_material_id)
+    );
+
+    // Filter to unprocessed
+    const toProcess = (sourceMaterials as SourceMaterial[]).filter((sm) => !existingIds.has(sm.id));
+
+    if (toProcess.length === 0) {
+      sendJson(res, 200, {
+        success: true,
+        data: {
+          processed: 0,
+          skipped: sourceMaterials.length,
+          errors: [],
+          message: 'All source materials already have extractions',
+        },
+      });
+      return;
+    }
+
+    console.log(`Batch extracting ${toProcess.length} source materials...`);
+
+    const results: Extraction[] = [];
+    const errors: string[] = [];
+
+    for (const sm of toProcess) {
+      try {
+        console.log(`Extracting: ${sm.title} (${sm.type}, ${sm.content.length} chars)`);
+        const extractionResult = await extractFromContent(sm.content, sm.type);
+
+        const insert: ExtractionInsert = {
+          source_material_id: sm.id,
+          document_id: null,
+          summary: extractionResult.summary,
+          key_points: extractionResult.key_points,
+          topics: extractionResult.topics,
+          model: EXTRACTION_MODEL,
+        };
+
+        const { data, error } = await db
+          .from('extractions')
+          .insert(insert)
+          .select()
+          .single();
+
+        if (error) {
+          errors.push(`${sm.title}: ${error.message}`);
+        } else {
+          results.push(data as Extraction);
+        }
+      } catch (err) {
+        errors.push(`${sm.title}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      }
+    }
+
+    sendJson(res, 200, {
+      success: true,
+      data: {
+        processed: results.length,
+        skipped: existingIds.size,
+        errors,
+        extractions: results,
+      },
+    });
+  } catch (err) {
+    console.error('Error in batch extraction:', err);
+    sendJson(res, 500, {
+      success: false,
+      error: err instanceof Error ? err.message : 'Internal server error',
+    });
+  }
+}
+
 async function handleList(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
@@ -208,6 +309,17 @@ export async function handleExtractions(
 
   if (req.method === 'GET') {
     return handleList(req, res);
+  }
+
+  sendJson(res, 405, { success: false, error: 'Method not allowed' });
+}
+
+export async function handleExtractionsBatch(
+  req: IncomingMessage,
+  res: ServerResponse
+): Promise<void> {
+  if (req.method === 'POST') {
+    return handleBatch(req, res);
   }
 
   sendJson(res, 405, { success: false, error: 'Method not allowed' });
