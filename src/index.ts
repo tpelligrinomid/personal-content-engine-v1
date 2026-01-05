@@ -126,6 +126,11 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     return handlePodcasts(req, res);
   }
 
+  // Adhoc must come before /api/generate/ to avoid being caught by startsWith
+  if (pathname === '/api/generate/adhoc' && req.method === 'POST') {
+    return handleAdhoc(req, res);
+  }
+
   if (pathname.startsWith('/api/generate/')) {
     return handleGenerate(req, res, pathname);
   }
@@ -148,10 +153,6 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   if (pathname.startsWith('/api/templates')) {
     return handleTemplates(req, res, pathname);
-  }
-
-  if (pathname === '/api/generate/adhoc' && req.method === 'POST') {
-    return handleAdhoc(req, res);
   }
 
   if (pathname.startsWith('/api/assets')) {
