@@ -119,7 +119,7 @@ async function handleUpdate(req: IncomingMessage, res: ServerResponse): Promise<
 
     // Validate content_formats if provided
     if (updates.content_formats) {
-      const validFormats = ['linkedin_post', 'linkedin_pov', 'twitter_post', 'twitter_thread', 'blog_post', 'newsletter'];
+      const validFormats = ['linkedin_post', 'linkedin_pov', 'twitter_post', 'twitter_thread', 'blog_post', 'newsletter', 'video_script', 'podcast_segment'];
       const formats = updates.content_formats as string[];
       const invalid = formats.filter((f) => !validFormats.includes(f));
       if (invalid.length > 0) {

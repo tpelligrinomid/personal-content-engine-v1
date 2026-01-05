@@ -172,7 +172,7 @@ All fields are optional. Only include fields you want to update.
 **Valid values:**
 - `crawl_schedule`: `manual`, `every_6_hours`, `twice_daily`, `daily`
 - `generation_schedule`: `manual`, `daily`, `weekly_sunday`, `weekly_monday`
-- `content_formats`: array of `linkedin_post`, `linkedin_pov`, `twitter_post`, `twitter_thread`, `blog_post`, `newsletter`
+- `content_formats`: array of `linkedin_post`, `linkedin_pov`, `twitter_post`, `twitter_thread`, `blog_post`, `newsletter`, `video_script`, `podcast_segment`
 
 **Note:** Users cannot change their own `role`. Only admins can change roles via `/api/users/:id`.
 
@@ -840,6 +840,8 @@ Manually trigger crawl and extraction jobs.
 - `blog_post` - Long-form blog article
 - `linkedin_post` - LinkedIn post
 - `twitter_post` - Twitter/X post or thread
+- `video_script` - Short-form video script (TikTok, Reels, YouTube Shorts)
+- `podcast_segment` - Solo podcast segment script (5-10 minutes)
 
 ### Asset Statuses
 - `draft` - Initial generated state

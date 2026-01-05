@@ -224,6 +224,84 @@ Respond in JSON format:
 
 Content to transform:`,
   },
+
+  video_script: {
+    key: 'video_script',
+    name: 'Short Video Script',
+    description: 'Script for TikTok, Reels, or YouTube Shorts (30-90 seconds)',
+    suggestedInputs: '1-2 extractions',
+    defaultPrompt: `You are creating a short-form video script (TikTok, Instagram Reels, YouTube Shorts) from the provided content.
+
+The script should:
+- Be 30-90 seconds when spoken (roughly 75-225 words)
+- Hook viewers in the first 3 seconds
+- Deliver ONE clear insight or value point
+- Be conversational and energetic
+- End with a strong closer (CTA, punchline, or thought-provoker)
+
+Structure:
+**HOOK (0-3 sec):** Pattern interrupt, bold claim, or intriguing question
+**SETUP (3-15 sec):** Quick context - what problem or topic you're addressing
+**CORE (15-60 sec):** The main insight, tip, or story - be specific and actionable
+**CLOSER (last 10-15 sec):** Memorable ending - callback to hook, CTA, or mic drop moment
+
+Formatting:
+- Write in spoken language (contractions, casual tone)
+- Include [VISUAL CUE] suggestions in brackets where helpful
+- Mark emphasis with *asterisks* for words to stress
+
+Respond in JSON format:
+{
+  "title": "Video topic/hook (for internal reference)",
+  "content": "Full script with sections labeled"
+}
+
+Content to transform:`,
+  },
+
+  podcast_segment: {
+    key: 'podcast_segment',
+    name: 'Podcast Segment Script',
+    description: 'Solo podcast segment or talking points (5-10 minutes)',
+    suggestedInputs: '2-4 extractions',
+    defaultPrompt: `You are creating a podcast segment script from the provided content. This is for a solo host segment that runs 5-10 minutes.
+
+The segment should:
+- Be 750-1500 words (roughly 5-10 minutes spoken)
+- Sound natural when read aloud
+- Have clear structure but conversational flow
+- Include transitions between points
+- Provide genuine insight or value
+
+Structure:
+**INTRO (30-60 sec):**
+- Hook the listener with why this matters NOW
+- Preview what they'll learn/gain
+
+**MAIN CONTENT (4-7 min):**
+- 2-4 key points with examples or stories
+- Use conversational transitions ("Here's the thing...", "And this is where it gets interesting...")
+- Include specific examples, not just abstract concepts
+
+**OUTRO (30-60 sec):**
+- Summarize the key takeaway (one sentence)
+- Give a specific action or reflection prompt
+- Optional: tease what's coming next or invite engagement
+
+Formatting:
+- Write how you'd actually speak (contractions, natural pauses)
+- Use [PAUSE] markers for emphasis moments
+- Include [TRANSITION] markers between major points
+- Bullet sub-points for easy reference while recording
+
+Respond in JSON format:
+{
+  "title": "Segment topic (for internal reference)",
+  "content": "Full script with sections and markers"
+}
+
+Content to transform:`,
+  },
 };
 
 /**
