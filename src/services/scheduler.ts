@@ -9,6 +9,7 @@ import cron from 'node-cron';
 import { createHash } from 'crypto';
 import { getDb } from './db';
 import { crawlBlog, scrapePage } from './firecrawl';
+import { isRedditUrl, fetchFromRedditUrl } from './reddit';
 import { extractFromContent, EXTRACTION_MODEL } from './claude';
 import { TrendSource, DocumentInsert, ExtractionInsert, UserSettings } from '../types';
 
@@ -117,7 +118,33 @@ async function crawlSourcesForUser(userId: string): Promise<{ crawled: number; d
 
       console.log(`[Scheduler] Crawling: ${source.name}`);
 
-      const pages = await crawlBlog(crawlUrl, { limit: ARTICLES_PER_SOURCE });
+      // Detect source type and use appropriate crawler
+      let pages: Array<{
+        url: string;
+        title: string | null;
+        content: string;
+        author: string | null;
+        publishedAt: string | null;
+      }>;
+
+      if (isRedditUrl(crawlUrl)) {
+        // Use Reddit crawler
+        console.log(`[Scheduler] Detected Reddit source: ${crawlUrl}`);
+        const redditPosts = await fetchFromRedditUrl(crawlUrl, {
+          limit: ARTICLES_PER_SOURCE,
+          minScore: 5, // Only get posts with at least 5 upvotes
+        });
+        pages = redditPosts.map((post) => ({
+          url: post.url,
+          title: post.title,
+          content: post.content,
+          author: post.author,
+          publishedAt: post.publishedAt,
+        }));
+      } else {
+        // Use Firecrawl for regular websites
+        pages = await crawlBlog(crawlUrl, { limit: ARTICLES_PER_SOURCE });
+      }
 
       for (const page of pages) {
         // Check for duplicates for this user
