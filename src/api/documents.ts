@@ -44,9 +44,9 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
     // First get documents
     let query = db
       .from('documents')
-      .select('id, title, url, published_at, crawled_at, trend_source_id', { count: 'exact' })
+      .select('id, title, url, published_at, fetched_at, trend_source_id', { count: 'exact' })
       .eq('user_id', userId)
-      .order('crawled_at', { ascending: false })
+      .order('fetched_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (sourceId) {
