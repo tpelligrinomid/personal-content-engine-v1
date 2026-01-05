@@ -20,6 +20,7 @@ interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
+  message?: string;
 }
 
 function parseBody(req: IncomingMessage): Promise<unknown> {
@@ -334,6 +335,8 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
     const documentId = url.searchParams.get('document_id');
     const sourceType = url.searchParams.get('source_type'); // Filter: meeting, podcast, voice_note, manual_note, trend, document
     const limit = parseInt(url.searchParams.get('limit') ?? '50', 10);
+    const includeArchived = url.searchParams.get('include_archived') === 'true';
+    const archivedOnly = url.searchParams.get('archived_only') === 'true';
 
     const db = getDb();
 
@@ -350,6 +353,13 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
     }
     if (documentId) {
       query = query.eq('document_id', documentId);
+    }
+
+    // Archive filtering
+    if (archivedOnly) {
+      query = query.not('archived_at', 'is', null);
+    } else if (!includeArchived) {
+      query = query.is('archived_at', null);
     }
 
     // Pre-filter by source type if looking for documents only
@@ -442,16 +452,78 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
   }
 }
 
+function extractIdFromPath(pathname: string): { id: string | null; action: string | null } {
+  const match = pathname.match(/\/api\/extractions\/([^/]+)(?:\/(archive|unarchive))?$/);
+  if (match) {
+    return { id: match[1], action: match[2] || null };
+  }
+  return { id: null, action: null };
+}
+
+async function handleArchive(
+  req: IncomingMessage,
+  res: ServerResponse,
+  id: string,
+  archive: boolean
+): Promise<void> {
+  try {
+    const userId = requireUserId(req);
+    const db = getDb();
+
+    const { data, error } = await db
+      .from('extractions')
+      .update({ archived_at: archive ? new Date().toISOString() : null })
+      .eq('id', id)
+      .eq('user_id', userId)
+      .select()
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        sendJson(res, 404, { success: false, error: 'Extraction not found' });
+        return;
+      }
+      sendJson(res, 500, { success: false, error: error.message });
+      return;
+    }
+
+    sendJson(res, 200, {
+      success: true,
+      data,
+      message: archive ? 'Archived successfully' : 'Unarchived successfully',
+    });
+  } catch (err) {
+    console.error('Error archiving extraction:', err);
+    sendJson(res, 500, { success: false, error: 'Internal server error' });
+  }
+}
+
 export async function handleExtractions(
   req: IncomingMessage,
-  res: ServerResponse
+  res: ServerResponse,
+  pathname?: string
 ): Promise<void> {
-  if (req.method === 'POST') {
+  const path = pathname || '/api/extractions';
+  const { id, action } = extractIdFromPath(path);
+
+  // POST /api/extractions - Create new
+  if (path === '/api/extractions' && req.method === 'POST') {
     return handleCreate(req, res);
   }
 
-  if (req.method === 'GET') {
+  // GET /api/extractions - List all
+  if (path === '/api/extractions' && req.method === 'GET') {
     return handleList(req, res);
+  }
+
+  // POST /api/extractions/:id/archive
+  if (id && action === 'archive' && req.method === 'POST') {
+    return handleArchive(req, res, id, true);
+  }
+
+  // POST /api/extractions/:id/unarchive
+  if (id && action === 'unarchive' && req.method === 'POST') {
+    return handleArchive(req, res, id, false);
   }
 
   sendJson(res, 405, { success: false, error: 'Method not allowed' });

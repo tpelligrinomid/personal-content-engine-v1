@@ -13,6 +13,7 @@ interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
+  message?: string;
 }
 
 function sendJson(res: ServerResponse, status: number, data: ApiResponse): void {
@@ -20,9 +21,12 @@ function sendJson(res: ServerResponse, status: number, data: ApiResponse): void 
   res.end(JSON.stringify(data));
 }
 
-function extractIdFromPath(pathname: string): string | null {
-  const match = pathname.match(/\/api\/documents\/([^/]+)/);
-  return match ? match[1] : null;
+function extractIdFromPath(pathname: string): { id: string | null; action: string | null } {
+  const match = pathname.match(/\/api\/documents\/([^/]+)(?:\/(archive|unarchive))?$/);
+  if (match) {
+    return { id: match[1], action: match[2] || null };
+  }
+  return { id: null, action: null };
 }
 
 function getQueryParams(req: IncomingMessage): URLSearchParams {
@@ -38,19 +42,28 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
     const extracted = params.get('extracted');
     const limit = parseInt(params.get('limit') || '50', 10);
     const offset = parseInt(params.get('offset') || '0', 10);
+    const includeArchived = params.get('include_archived') === 'true';
+    const archivedOnly = params.get('archived_only') === 'true';
 
     const db = getDb();
 
     // First get documents
     let query = db
       .from('documents')
-      .select('id, title, url, published_at, fetched_at, trend_source_id', { count: 'exact' })
+      .select('id, title, url, published_at, fetched_at, trend_source_id, archived_at', { count: 'exact' })
       .eq('user_id', userId)
       .order('fetched_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (sourceId) {
       query = query.eq('trend_source_id', sourceId);
+    }
+
+    // Archive filtering
+    if (archivedOnly) {
+      query = query.not('archived_at', 'is', null);
+    } else if (!includeArchived) {
+      query = query.is('archived_at', null);
     }
 
     const { data: documents, error, count } = await query;
@@ -162,20 +175,68 @@ async function handleGet(
   }
 }
 
+async function handleArchive(
+  req: IncomingMessage,
+  res: ServerResponse,
+  id: string,
+  archive: boolean
+): Promise<void> {
+  try {
+    const userId = requireUserId(req);
+    const db = getDb();
+
+    const { data, error } = await db
+      .from('documents')
+      .update({ archived_at: archive ? new Date().toISOString() : null })
+      .eq('id', id)
+      .eq('user_id', userId)
+      .select()
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        sendJson(res, 404, { success: false, error: 'Document not found' });
+        return;
+      }
+      sendJson(res, 500, { success: false, error: error.message });
+      return;
+    }
+
+    sendJson(res, 200, {
+      success: true,
+      data,
+      message: archive ? 'Archived successfully' : 'Unarchived successfully',
+    });
+  } catch (err) {
+    console.error('Error archiving document:', err);
+    sendJson(res, 500, { success: false, error: 'Internal server error' });
+  }
+}
+
 export async function handleDocuments(
   req: IncomingMessage,
   res: ServerResponse,
   pathname: string
 ): Promise<void> {
-  const id = extractIdFromPath(pathname);
+  const { id, action } = extractIdFromPath(pathname);
 
   // List all documents
   if (pathname === '/api/documents' && req.method === 'GET') {
     return handleList(req, res);
   }
 
+  // POST /api/documents/:id/archive
+  if (id && action === 'archive' && req.method === 'POST') {
+    return handleArchive(req, res, id, true);
+  }
+
+  // POST /api/documents/:id/unarchive
+  if (id && action === 'unarchive' && req.method === 'POST') {
+    return handleArchive(req, res, id, false);
+  }
+
   // Single document
-  if (id && req.method === 'GET') {
+  if (id && !action && req.method === 'GET') {
     return handleGet(req, res, id);
   }
 

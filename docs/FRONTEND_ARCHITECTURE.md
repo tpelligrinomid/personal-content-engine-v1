@@ -349,6 +349,45 @@ Source Materials → Extract → Extractions → Generate → Assets
 
 ---
 
+## Archive Feature
+
+Content can be archived to declutter lists without deleting data.
+
+**Supported on:**
+- Source Materials (meetings, podcasts, voice notes, manual notes)
+- Documents (crawled articles)
+- Extractions
+
+**Query Parameters (all list endpoints):**
+| Parameter | Effect |
+|-----------|--------|
+| (default) | Returns only non-archived items |
+| `include_archived=true` | Returns all items (archived + non-archived) |
+| `archived_only=true` | Returns only archived items |
+
+**Archive Actions:**
+```
+POST /api/source-materials/:id/archive   → Archive
+POST /api/source-materials/:id/unarchive → Unarchive
+POST /api/documents/:id/archive          → Archive
+POST /api/documents/:id/unarchive        → Unarchive
+POST /api/extractions/:id/archive        → Archive
+POST /api/extractions/:id/unarchive      → Unarchive
+```
+
+**Cascading:**
+- Archiving a source material → automatically archives its extraction
+- Archiving a document → automatically archives its extraction
+- Unarchiving → automatically unarchives the related extraction
+
+**UI Suggestions:**
+- Add archive/unarchive buttons on list items and detail views
+- Add "Show archived" toggle filter
+- Display `archived_at` timestamp on archived items
+- Consider bulk archive for cleaning up multiple items
+
+---
+
 ## API Quick Reference
 
 ### Authentication
@@ -394,17 +433,21 @@ DELETE /api/assets/:id          → Delete
 
 ### Documents (Crawled Articles)
 ```
-GET /api/documents              → List (?source_id=&extracted=true/false)
-GET /api/documents/:id          → Single with extraction
+GET  /api/documents              → List (?source_id=&extracted=&include_archived=&archived_only=)
+GET  /api/documents/:id          → Single with extraction
+POST /api/documents/:id/archive  → Archive document (cascades to extraction)
+POST /api/documents/:id/unarchive → Unarchive document (cascades to extraction)
 ```
 
 ### Source Materials (Personal Content)
 ```
-GET  /api/source-materials      → List all
-POST /api/ingest/voice-note     → Add voice note
-POST /api/ingest/manual-note    → Add manual note
-POST /api/ingest/podcast        → Add podcast transcript
-POST /api/ingest/fireflies      → Add meeting transcript
+GET  /api/source-materials            → List (?type=&include_archived=&archived_only=)
+POST /api/source-materials/:id/archive   → Archive (cascades to extraction)
+POST /api/source-materials/:id/unarchive → Unarchive (cascades to extraction)
+POST /api/ingest/voice-note           → Add voice note
+POST /api/ingest/manual-note          → Add manual note
+POST /api/ingest/podcast              → Add podcast transcript
+POST /api/ingest/fireflies            → Add meeting transcript
 ```
 
 ### Trend Sources
@@ -417,8 +460,10 @@ DELETE /api/trend-sources/:id   → Delete
 
 ### Extractions
 ```
-GET  /api/extractions           → List (?limit=)
-POST /api/extractions/batch     → Run extraction (?limit=)
+GET  /api/extractions              → List (?source_type=&include_archived=&archived_only=&limit=)
+POST /api/extractions/batch        → Run extraction (?limit=)
+POST /api/extractions/:id/archive  → Archive extraction
+POST /api/extractions/:id/unarchive → Unarchive extraction
 ```
 
 ### Templates

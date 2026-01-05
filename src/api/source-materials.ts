@@ -22,6 +22,7 @@ interface ApiResponse<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
+  message?: string;
 }
 
 function parseBody(req: IncomingMessage): Promise<unknown> {
@@ -111,6 +112,8 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
     const typeFilter = url.searchParams.get('type') as SourceMaterialType | null;
     const limit = parseInt(url.searchParams.get('limit') ?? '50', 10);
+    const includeArchived = url.searchParams.get('include_archived') === 'true';
+    const archivedOnly = url.searchParams.get('archived_only') === 'true';
 
     const db = getDb();
     let query = db
@@ -122,6 +125,13 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
 
     if (typeFilter) {
       query = query.eq('type', typeFilter);
+    }
+
+    // Archive filtering
+    if (archivedOnly) {
+      query = query.not('archived_at', 'is', null);
+    } else if (!includeArchived) {
+      query = query.is('archived_at', null);
     }
 
     const { data, error } = await query;
@@ -139,16 +149,79 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
   }
 }
 
+async function handleArchive(
+  req: IncomingMessage,
+  res: ServerResponse,
+  id: string,
+  archive: boolean
+): Promise<void> {
+  try {
+    const userId = requireUserId(req);
+    const db = getDb();
+
+    const { data, error } = await db
+      .from('source_materials')
+      .update({ archived_at: archive ? new Date().toISOString() : null })
+      .eq('id', id)
+      .eq('user_id', userId)
+      .select()
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        sendJson(res, 404, { success: false, error: 'Source material not found' });
+        return;
+      }
+      sendJson(res, 500, { success: false, error: error.message });
+      return;
+    }
+
+    sendJson(res, 200, {
+      success: true,
+      data,
+      message: archive ? 'Archived successfully' : 'Unarchived successfully',
+    });
+  } catch (err) {
+    console.error('Error archiving source material:', err);
+    sendJson(res, 500, { success: false, error: 'Internal server error' });
+  }
+}
+
+function extractIdFromPath(pathname: string): { id: string | null; action: string | null } {
+  // Match /api/source-materials/:id or /api/source-materials/:id/archive
+  const match = pathname.match(/\/api\/source-materials\/([^/]+)(?:\/(archive|unarchive))?$/);
+  if (match) {
+    return { id: match[1], action: match[2] || null };
+  }
+  return { id: null, action: null };
+}
+
 export async function handleSourceMaterials(
   req: IncomingMessage,
-  res: ServerResponse
+  res: ServerResponse,
+  pathname?: string
 ): Promise<void> {
-  if (req.method === 'POST') {
+  const path = pathname || '/api/source-materials';
+  const { id, action } = extractIdFromPath(path);
+
+  // POST /api/source-materials - Create new
+  if (path === '/api/source-materials' && req.method === 'POST') {
     return handleCreate(req, res);
   }
 
-  if (req.method === 'GET') {
+  // GET /api/source-materials - List all
+  if (path === '/api/source-materials' && req.method === 'GET') {
     return handleList(req, res);
+  }
+
+  // POST /api/source-materials/:id/archive
+  if (id && action === 'archive' && req.method === 'POST') {
+    return handleArchive(req, res, id, true);
+  }
+
+  // POST /api/source-materials/:id/unarchive
+  if (id && action === 'unarchive' && req.method === 'POST') {
+    return handleArchive(req, res, id, false);
   }
 
   sendJson(res, 405, { success: false, error: 'Method not allowed' });

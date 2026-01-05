@@ -94,12 +94,12 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
   }
 
   // API routes
-  if (pathname === '/api/source-materials') {
-    return handleSourceMaterials(req, res);
+  if (pathname.startsWith('/api/source-materials')) {
+    return handleSourceMaterials(req, res, pathname);
   }
 
-  if (pathname === '/api/extractions') {
-    return handleExtractions(req, res);
+  if (pathname.startsWith('/api/extractions') && !pathname.startsWith('/api/extractions/batch')) {
+    return handleExtractions(req, res, pathname);
   }
 
   if (pathname === '/api/extractions/batch') {
