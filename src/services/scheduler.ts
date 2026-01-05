@@ -13,11 +13,62 @@ import { extractFromContent, EXTRACTION_MODEL } from './claude';
 import { TrendSource, DocumentInsert, ExtractionInsert, UserSettings } from '../types';
 
 // Configuration
-const CRAWL_SCHEDULE = process.env.CRAWL_SCHEDULE || '0 */6 * * *'; // Every 6 hours
+// Global schedule - how often the scheduler checks for work (not per-user schedule)
+const SCHEDULER_CHECK_INTERVAL = process.env.SCHEDULER_CHECK_INTERVAL || '0 */1 * * *'; // Check every hour
 const SOURCES_PER_RUN = parseInt(process.env.SOURCES_PER_RUN || '3', 10);
 const ARTICLES_PER_SOURCE = parseInt(process.env.ARTICLES_PER_SOURCE || '5', 10);
 const EXTRACTIONS_PER_RUN = parseInt(process.env.EXTRACTIONS_PER_RUN || '10', 10);
 const DELAY_BETWEEN_SOURCES_MS = 5000; // 5 seconds between sources
+
+/**
+ * Check if a user should be crawled based on their schedule and last crawl time
+ */
+function shouldCrawlUser(
+  schedule: string | null,
+  lastCrawlAt: string | null,
+  timezone: string | null
+): boolean {
+  if (!schedule) return false;
+
+  const now = new Date();
+  const userTz = timezone || 'UTC';
+
+  // If never crawled, should crawl
+  if (!lastCrawlAt) return true;
+
+  const lastCrawl = new Date(lastCrawlAt);
+  const hoursSinceLastCrawl = (now.getTime() - lastCrawl.getTime()) / (1000 * 60 * 60);
+
+  // Parse schedule and determine if enough time has passed
+  switch (schedule) {
+    case 'hourly':
+      return hoursSinceLastCrawl >= 1;
+
+    case 'every_6_hours':
+      return hoursSinceLastCrawl >= 6;
+
+    case 'every_12_hours':
+      return hoursSinceLastCrawl >= 12;
+
+    case 'daily':
+      return hoursSinceLastCrawl >= 24;
+
+    case 'weekly':
+    case 'weekly_sunday':
+    case 'weekly_monday':
+    case 'weekly_tuesday':
+    case 'weekly_wednesday':
+    case 'weekly_thursday':
+    case 'weekly_friday':
+    case 'weekly_saturday':
+      return hoursSinceLastCrawl >= 24 * 7;
+
+    default:
+      // Unknown schedule, default to daily
+      console.log(`[Scheduler] Unknown schedule "${schedule}", defaulting to daily`);
+      return hoursSinceLastCrawl >= 24;
+  }
+}
 
 let isRunning = false;
 let lastRunAt: string | null = null;
@@ -122,16 +173,23 @@ async function crawlSourcesForUser(userId: string): Promise<{ crawled: number; d
   return { crawled: sources.length, documents: documentsCreated, errors };
 }
 
+interface UserSettingsForCrawl {
+  user_id: string;
+  crawl_schedule: string | null;
+  last_crawl_at: string | null;
+  timezone: string | null;
+}
+
 async function crawlSources(): Promise<{ crawled: number; documents: number; errors: string[] }> {
   const db = getDb();
   const allErrors: string[] = [];
   let totalCrawled = 0;
   let totalDocuments = 0;
 
-  // Get all users with crawl_enabled
+  // Get all users with crawl_enabled, including their schedule settings
   const { data: usersSettings } = await db
     .from('user_settings')
-    .select('user_id')
+    .select('user_id, crawl_schedule, last_crawl_at, timezone')
     .eq('crawl_enabled', true);
 
   if (!usersSettings || usersSettings.length === 0) {
@@ -139,19 +197,25 @@ async function crawlSources(): Promise<{ crawled: number; documents: number; err
     return { crawled: 0, documents: 0, errors: [] };
   }
 
-  for (const settings of usersSettings as { user_id: string }[]) {
+  for (const settings of usersSettings as UserSettingsForCrawl[]) {
+    // Check if this user should be crawled based on their schedule
+    if (!shouldCrawlUser(settings.crawl_schedule, settings.last_crawl_at, settings.timezone)) {
+      console.log(`[Scheduler] Skipping user ${settings.user_id} - not due for crawl (schedule: ${settings.crawl_schedule}, last: ${settings.last_crawl_at})`);
+      continue;
+    }
+
+    console.log(`[Scheduler] User ${settings.user_id} is due for crawl (schedule: ${settings.crawl_schedule})`);
+
     const result = await crawlSourcesForUser(settings.user_id);
     totalCrawled += result.crawled;
     totalDocuments += result.documents;
     allErrors.push(...result.errors);
 
-    // Update last_crawl_at for this user
-    if (result.crawled > 0) {
-      await db
-        .from('user_settings')
-        .update({ last_crawl_at: new Date().toISOString() })
-        .eq('user_id', settings.user_id);
-    }
+    // Update last_crawl_at for this user (even if no new documents, mark as crawled)
+    await db
+      .from('user_settings')
+      .update({ last_crawl_at: new Date().toISOString() })
+      .eq('user_id', settings.user_id);
   }
 
   return { crawled: totalCrawled, documents: totalDocuments, errors: allErrors };
@@ -279,17 +343,18 @@ async function runScheduledJob(): Promise<void> {
 }
 
 export function startScheduler(): void {
-  console.log(`[Scheduler] Starting with schedule: ${CRAWL_SCHEDULE}`);
+  console.log(`[Scheduler] Starting with check interval: ${SCHEDULER_CHECK_INTERVAL}`);
   console.log(`[Scheduler] Config: ${SOURCES_PER_RUN} sources, ${ARTICLES_PER_SOURCE} articles each, ${EXTRACTIONS_PER_RUN} extractions per run`);
+  console.log(`[Scheduler] Note: Per-user schedules are respected (daily, weekly, etc.)`);
 
   // Validate cron expression
-  if (!cron.validate(CRAWL_SCHEDULE)) {
-    console.error(`[Scheduler] Invalid cron expression: ${CRAWL_SCHEDULE}`);
+  if (!cron.validate(SCHEDULER_CHECK_INTERVAL)) {
+    console.error(`[Scheduler] Invalid cron expression: ${SCHEDULER_CHECK_INTERVAL}`);
     return;
   }
 
-  // Schedule the job
-  cron.schedule(CRAWL_SCHEDULE, () => {
+  // Schedule the job - checks hourly, but only runs for users whose schedule is due
+  cron.schedule(SCHEDULER_CHECK_INTERVAL, () => {
     runScheduledJob().catch(console.error);
   });
 
@@ -323,12 +388,12 @@ export async function triggerManualRun(): Promise<{
 
 export function getSchedulerStatus(): {
   isRunning: boolean;
-  schedule: string;
+  checkInterval: string;
   lastRunAt: string | null;
   lastRunResult: {
     crawl: { crawled: number; documents: number; errors: string[] };
     extraction: { extracted: number; errors: string[] };
   } | null;
 } {
-  return { isRunning, schedule: CRAWL_SCHEDULE, lastRunAt, lastRunResult };
+  return { isRunning, checkInterval: SCHEDULER_CHECK_INTERVAL, lastRunAt, lastRunResult };
 }
