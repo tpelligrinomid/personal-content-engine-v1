@@ -66,6 +66,13 @@ async function handleGet(req: IncomingMessage, res: ServerResponse): Promise<voi
             timezone: 'America/New_York',
             last_crawl_at: null,
             last_generation_at: null,
+            // Content profile (empty defaults)
+            content_pillars: [],
+            professional_background: null,
+            target_audience: null,
+            voice_tone: null,
+            unique_angle: null,
+            signature_elements: null,
           },
         });
         return;
@@ -99,6 +106,13 @@ async function handleUpdate(req: IncomingMessage, res: ServerResponse): Promise<
       'generation_time',
       'content_formats',
       'timezone',
+      // Content profile fields
+      'content_pillars',
+      'professional_background',
+      'target_audience',
+      'voice_tone',
+      'unique_angle',
+      'signature_elements',
     ];
 
     const updates: Record<string, unknown> = {};

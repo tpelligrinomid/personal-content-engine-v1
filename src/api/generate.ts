@@ -19,6 +19,7 @@ import {
   generateBlogPost,
   generateLinkedInPosts,
   generateTwitterPosts,
+  getProfileContextForUser,
 } from '../services/generate';
 import { Asset, AssetInsert, AssetInputInsert } from '../types';
 
@@ -106,10 +107,16 @@ async function runGeneration(userId: string, daysBack: number): Promise<void> {
     .map((e) => (e as ExtractionRow).document_id)
     .filter((id): id is string => id !== null);
 
+  // Fetch user's content profile
+  const profileContext = await getProfileContextForUser(userId);
+  if (profileContext) {
+    console.log('[Generate] Using content profile for generation');
+  }
+
   // Generate newsletter
   try {
     console.log('[Generate] Creating newsletter...');
-    const newsletter = await generateNewsletter(extractionsWithSource);
+    const newsletter = await generateNewsletter(extractionsWithSource, profileContext);
     const asset = await saveAsset(db, userId, 'newsletter', newsletter.title, newsletter.content, sourceIds, documentIds);
     assets.push(asset);
   } catch (err) {
@@ -119,7 +126,7 @@ async function runGeneration(userId: string, daysBack: number): Promise<void> {
   // Generate blog post
   try {
     console.log('[Generate] Creating blog post...');
-    const blogPost = await generateBlogPost(extractionsWithSource);
+    const blogPost = await generateBlogPost(extractionsWithSource, profileContext);
     const asset = await saveAsset(db, userId, 'blog_post', blogPost.title, blogPost.content, sourceIds, documentIds);
     assets.push(asset);
   } catch (err) {
@@ -129,7 +136,7 @@ async function runGeneration(userId: string, daysBack: number): Promise<void> {
   // Generate LinkedIn posts
   try {
     console.log('[Generate] Creating LinkedIn posts...');
-    const linkedInPosts = await generateLinkedInPosts(extractionsWithSource);
+    const linkedInPosts = await generateLinkedInPosts(extractionsWithSource, profileContext);
     for (const post of linkedInPosts) {
       const asset = await saveAsset(db, userId, 'linkedin_post', post.title, post.content, sourceIds, documentIds);
       assets.push(asset);
@@ -141,7 +148,7 @@ async function runGeneration(userId: string, daysBack: number): Promise<void> {
   // Generate Twitter posts
   try {
     console.log('[Generate] Creating Twitter posts...');
-    const twitterPosts = await generateTwitterPosts(extractionsWithSource);
+    const twitterPosts = await generateTwitterPosts(extractionsWithSource, profileContext);
     for (const post of twitterPosts) {
       const asset = await saveAsset(db, userId, 'twitter_post', post.title, post.content, sourceIds, documentIds);
       assets.push(asset);

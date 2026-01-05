@@ -11,6 +11,7 @@ import { getDb } from '../services/db';
 import { requireUserId } from '../middleware/auth';
 import { getClaudeClient } from '../services/claude';
 import { getTemplatePrompt, isValidTemplateKey } from '../services/templates';
+import { getProfileContextForUser } from '../services/profile';
 import { Asset, AssetInsert, AssetInputInsert, Extraction } from '../types';
 
 const GENERATION_MODEL = 'claude-sonnet-4-20250514';
@@ -92,12 +93,20 @@ function buildExtractionContext(extractions: ExtractionWithSource[]): string {
 async function generateContent(
   prompt: string,
   extractions: ExtractionWithSource[],
+  profileContext: string,
   instructions?: string
 ): Promise<{ title: string; content: string }> {
   const claude = getClaudeClient();
   const context = buildExtractionContext(extractions);
 
-  let fullPrompt = `${prompt}\n\n${context}`;
+  // Build full prompt with profile context prepended
+  let fullPrompt = '';
+
+  if (profileContext) {
+    fullPrompt += `${profileContext}\n`;
+  }
+
+  fullPrompt += `${prompt}\n\n${context}`;
 
   if (instructions) {
     fullPrompt += `\n\n---\nAdditional instructions: ${instructions}`;
@@ -219,6 +228,12 @@ export async function handleAdhoc(
       .map((e) => e.document_id)
       .filter((id): id is string => id !== null);
 
+    // Fetch user's content profile
+    const profileContext = await getProfileContextForUser(userId);
+    if (profileContext) {
+      console.log('[Adhoc] Using content profile for generation');
+    }
+
     // Generate each format
     for (const format of body.formats) {
       try {
@@ -230,7 +245,7 @@ export async function handleAdhoc(
           continue;
         }
 
-        const generated = await generateContent(prompt, extractionsWithSource, body.instructions);
+        const generated = await generateContent(prompt, extractionsWithSource, profileContext, body.instructions);
 
         // Save to assets
         const assetType = mapFormatToAssetType(format);

@@ -5,6 +5,7 @@
  */
 
 import { getClaudeClient } from './claude';
+import { getProfileContextForUser } from './profile';
 import { Extraction } from '../types';
 
 export const GENERATION_MODEL = 'claude-sonnet-4-20250514';
@@ -154,10 +155,18 @@ Extractions from this week:
 
 async function generateFromPrompt(
   prompt: string,
-  extractions: ExtractionWithSource[]
+  extractions: ExtractionWithSource[],
+  profileContext?: string
 ): Promise<string> {
   const claude = getClaudeClient();
   const context = buildExtractionContext(extractions);
+
+  // Build full prompt with profile context prepended
+  let fullPrompt = '';
+  if (profileContext) {
+    fullPrompt += `${profileContext}\n`;
+  }
+  fullPrompt += `${prompt}\n\n${context}`;
 
   const response = await claude.messages.create({
     model: GENERATION_MODEL,
@@ -165,7 +174,7 @@ async function generateFromPrompt(
     messages: [
       {
         role: 'user',
-        content: `${prompt}\n\n${context}`,
+        content: fullPrompt,
       },
     ],
   });
@@ -187,9 +196,10 @@ function parseJsonResponse(text: string): unknown {
 }
 
 export async function generateNewsletter(
-  extractions: ExtractionWithSource[]
+  extractions: ExtractionWithSource[],
+  profileContext?: string
 ): Promise<GeneratedContent> {
-  const response = await generateFromPrompt(NEWSLETTER_PROMPT, extractions);
+  const response = await generateFromPrompt(NEWSLETTER_PROMPT, extractions, profileContext);
   const parsed = parseJsonResponse(response) as GeneratedContent;
 
   if (!parsed.title || !parsed.content) {
@@ -200,9 +210,10 @@ export async function generateNewsletter(
 }
 
 export async function generateBlogPost(
-  extractions: ExtractionWithSource[]
+  extractions: ExtractionWithSource[],
+  profileContext?: string
 ): Promise<GeneratedContent> {
-  const response = await generateFromPrompt(BLOG_POST_PROMPT, extractions);
+  const response = await generateFromPrompt(BLOG_POST_PROMPT, extractions, profileContext);
   const parsed = parseJsonResponse(response) as GeneratedContent;
 
   if (!parsed.title || !parsed.content) {
@@ -213,9 +224,10 @@ export async function generateBlogPost(
 }
 
 export async function generateLinkedInPosts(
-  extractions: ExtractionWithSource[]
+  extractions: ExtractionWithSource[],
+  profileContext?: string
 ): Promise<GeneratedContent[]> {
-  const response = await generateFromPrompt(LINKEDIN_PROMPT, extractions);
+  const response = await generateFromPrompt(LINKEDIN_PROMPT, extractions, profileContext);
   const parsed = parseJsonResponse(response) as { posts: GeneratedContent[] };
 
   if (!parsed.posts || !Array.isArray(parsed.posts)) {
@@ -226,9 +238,10 @@ export async function generateLinkedInPosts(
 }
 
 export async function generateTwitterPosts(
-  extractions: ExtractionWithSource[]
+  extractions: ExtractionWithSource[],
+  profileContext?: string
 ): Promise<GeneratedContent[]> {
-  const response = await generateFromPrompt(TWITTER_PROMPT, extractions);
+  const response = await generateFromPrompt(TWITTER_PROMPT, extractions, profileContext);
   const parsed = parseJsonResponse(response) as { posts: GeneratedContent[] };
 
   if (!parsed.posts || !Array.isArray(parsed.posts)) {
@@ -237,3 +250,6 @@ export async function generateTwitterPosts(
 
   return parsed.posts;
 }
+
+// Re-export for convenience
+export { getProfileContextForUser };

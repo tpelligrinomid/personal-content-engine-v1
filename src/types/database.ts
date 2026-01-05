@@ -33,6 +33,13 @@ export interface UserSettings {
   timezone: string;
   last_crawl_at: string | null;
   last_generation_at: string | null;
+  // Content profile
+  content_pillars: string[];
+  professional_background: string | null;
+  target_audience: string | null;
+  voice_tone: string | null;
+  unique_angle: string | null;
+  signature_elements: string | null;
   created_at: string;
   updated_at: string;
 }

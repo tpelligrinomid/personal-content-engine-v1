@@ -233,11 +233,25 @@ Check role via `GET /api/settings` → `data.role`
 ---
 
 ### 10. Settings (`/settings`)
-**Purpose:** Configure personal preferences
+**Purpose:** Configure personal preferences and content profile
 
 **API:** `GET /api/settings`, `PATCH /api/settings`
 
 **Sections:**
+
+**Content Profile** (NEW - shapes all generated content):
+- Content Pillars (array of strings): 3-6 core topics to focus on
+  - Example: ["Agency M&A", "Team Building", "Agency Operations", "Entrepreneurship"]
+- Professional Background (text): Credentials and experience to reference
+  - Example: "Founder of Punctuation, 15 years in agency world, completed multiple acquisitions"
+- Target Audience (text): Who you're writing for
+  - Example: "Agency owners, marketing leaders, entrepreneurs considering exits"
+- Voice & Tone (text): How content should sound
+  - Example: "Direct, practical, occasionally provocative. No fluff."
+- Unique Angle (text): What makes your perspective different
+  - Example: "Practitioner POV - I've been in the trenches, not just advising"
+- Signature Elements (text): Recurring themes, phrases, frameworks
+  - Example: "The 3-legged stool of agency value; always include actionable takeaway"
 
 **Content Generation:**
 - Content formats checkboxes:
@@ -455,6 +469,15 @@ POST /api/scheduler/trigger     → Manual crawl + extract
 ### User Roles
 - `admin` - Can manage users and allowed emails
 - `user` - Standard access
+
+### Content Profile Fields (in user_settings)
+These fields shape all generated content for the user:
+- `content_pillars` (string[]) - Core topics to focus on (3-6 recommended)
+- `professional_background` (string | null) - Credentials and experience
+- `target_audience` (string | null) - Who the user writes for
+- `voice_tone` (string | null) - How content should sound
+- `unique_angle` (string | null) - What makes their perspective different
+- `signature_elements` (string | null) - Recurring themes, phrases, frameworks
 
 ### Trend Source Fields
 - `crawl_method`: `rss`, `sitemap`, `html`, `api`, `manual`
