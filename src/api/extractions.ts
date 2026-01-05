@@ -332,9 +332,12 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
     const sourceMaterialId = url.searchParams.get('source_material_id');
     const documentId = url.searchParams.get('document_id');
+    const sourceType = url.searchParams.get('source_type'); // Filter: meeting, podcast, voice_note, manual_note, trend, document
     const limit = parseInt(url.searchParams.get('limit') ?? '50', 10);
 
     const db = getDb();
+
+    // First get extractions
     let query = db
       .from('extractions')
       .select('*')
@@ -349,7 +352,15 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
       query = query.eq('document_id', documentId);
     }
 
-    const { data, error } = await query;
+    // Pre-filter by source type if looking for documents only
+    if (sourceType === 'document') {
+      query = query.not('document_id', 'is', null);
+    } else if (sourceType && sourceType !== 'document') {
+      // For source material types, filter to only those with source_material_id
+      query = query.not('source_material_id', 'is', null);
+    }
+
+    const { data: extractions, error } = await query;
 
     if (error) {
       console.error('Database error:', error);
@@ -357,7 +368,74 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
       return;
     }
 
-    sendJson(res, 200, { success: true, data: data as Extraction[] });
+    // Get source material types for extractions that have source_material_id
+    const smIds = (extractions ?? [])
+      .map((e: any) => e.source_material_id)
+      .filter(Boolean);
+
+    let sourceMaterialTypes: Record<string, { type: string; title: string | null }> = {};
+    if (smIds.length > 0) {
+      const { data: sourceMaterials } = await db
+        .from('source_materials')
+        .select('id, type, title')
+        .in('id', smIds);
+
+      if (sourceMaterials) {
+        sourceMaterialTypes = Object.fromEntries(
+          sourceMaterials.map((sm: any) => [sm.id, { type: sm.type, title: sm.title }])
+        );
+      }
+    }
+
+    // Get document titles for extractions that have document_id
+    const docIds = (extractions ?? [])
+      .map((e: any) => e.document_id)
+      .filter(Boolean);
+
+    let documentInfo: Record<string, { title: string | null }> = {};
+    if (docIds.length > 0) {
+      const { data: documents } = await db
+        .from('documents')
+        .select('id, title')
+        .in('id', docIds);
+
+      if (documents) {
+        documentInfo = Object.fromEntries(
+          documents.map((doc: any) => [doc.id, { title: doc.title }])
+        );
+      }
+    }
+
+    // Enrich extractions with source_type and source_title
+    let enrichedExtractions = (extractions ?? []).map((extraction: any) => {
+      if (extraction.source_material_id && sourceMaterialTypes[extraction.source_material_id]) {
+        return {
+          ...extraction,
+          source_type: sourceMaterialTypes[extraction.source_material_id].type,
+          source_title: sourceMaterialTypes[extraction.source_material_id].title,
+        };
+      } else if (extraction.document_id) {
+        return {
+          ...extraction,
+          source_type: 'document',
+          source_title: documentInfo[extraction.document_id]?.title || null,
+        };
+      }
+      return {
+        ...extraction,
+        source_type: 'unknown',
+        source_title: null,
+      };
+    });
+
+    // Post-filter by specific source material type if needed
+    if (sourceType && sourceType !== 'document') {
+      enrichedExtractions = enrichedExtractions.filter(
+        (e: any) => e.source_type === sourceType
+      );
+    }
+
+    sendJson(res, 200, { success: true, data: enrichedExtractions });
   } catch (err) {
     console.error('Error listing extractions:', err);
     sendJson(res, 500, { success: false, error: 'Internal server error' });
