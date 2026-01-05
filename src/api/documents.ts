@@ -40,17 +40,11 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
     const offset = parseInt(params.get('offset') || '0', 10);
 
     const db = getDb();
+
+    // First get documents
     let query = db
       .from('documents')
-      .select(`
-        id,
-        title,
-        url,
-        published_at,
-        crawled_at,
-        trend_source_id,
-        trend_sources (id, name, url)
-      `, { count: 'exact' })
+      .select('id, title, url, published_at, crawled_at, trend_source_id', { count: 'exact' })
       .eq('user_id', userId)
       .order('crawled_at', { ascending: false })
       .range(offset, offset + limit - 1);
@@ -62,12 +56,34 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
     const { data: documents, error, count } = await query;
 
     if (error) {
+      console.error('Documents query error:', error);
       sendJson(res, 500, { success: false, error: error.message });
       return;
     }
 
+    // Fetch trend_sources separately to avoid join issues
+    const trendSourceIds = [...new Set(documents?.map((d: any) => d.trend_source_id).filter(Boolean) || [])];
+    let trendSourcesMap: Record<string, any> = {};
+
+    if (trendSourceIds.length > 0) {
+      const { data: trendSources } = await db
+        .from('trend_sources')
+        .select('id, name, url')
+        .in('id', trendSourceIds);
+
+      if (trendSources) {
+        trendSourcesMap = Object.fromEntries(trendSources.map((ts: any) => [ts.id, ts]));
+      }
+    }
+
+    // Attach trend_sources to documents
+    const docsWithSources = documents?.map((doc: any) => ({
+      ...doc,
+      trend_sources: trendSourcesMap[doc.trend_source_id] || null,
+    })) || [];
+
     // If filtering by extracted status, we need to check extractions
-    let filteredDocs = documents;
+    let filteredDocs = docsWithSources;
     if (extracted !== null) {
       const docIds = documents?.map((d: any) => d.id) || [];
 
