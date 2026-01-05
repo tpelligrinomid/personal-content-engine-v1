@@ -46,10 +46,21 @@ Returns overview statistics for the dashboard.
       "extractions_this_week": 0,
       "assets_this_week": 55,
       "documents_this_week": 0
+    },
+    "scheduler": {
+      "isRunning": false,
+      "schedule": "0 */6 * * *",
+      "lastRunAt": "2026-01-04T18:00:00.000Z",
+      "lastRunResult": {
+        "crawl": { "crawled": 3, "documents": 12, "errors": [] },
+        "extraction": { "extracted": 10, "errors": [] }
+      }
     }
   }
 }
 ```
+
+**Note:** `lastRunAt` and `lastRunResult` are `null` until the first scheduler run.
 
 ---
 

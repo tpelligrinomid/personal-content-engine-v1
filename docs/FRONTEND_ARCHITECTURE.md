@@ -12,7 +12,7 @@
 /documents/:id          → Document detail with extraction
 /generate               → Ad-hoc generation wizard
 /templates              → Template management
-/settings               → Scheduler controls, system config
+/settings               → Scheduler controls (trigger, status)
 ```
 
 ---
@@ -176,6 +176,7 @@ Source Materials → Extract → Extractions → Generate → Assets
 ```
 GET /api/stats
 ```
+Returns: counts, recent items, weekly activity, and scheduler status (isRunning, schedule, lastRunAt, lastRunResult)
 
 ### Assets (Generated Content)
 ```
