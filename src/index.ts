@@ -15,12 +15,49 @@ import { getDb } from './services/db';
 
 const PORT = process.env.PORT || 3000;
 
+// Allowed origins for CORS
+const ALLOWED_ORIGINS = [
+  'https://content-loom-studio-93.lovable.app',
+  'https://contentengine.aragon-holdings.com',
+  'http://localhost:5173',
+  'http://localhost:3000',
+];
+
+function setCorsHeaders(req: IncomingMessage, res: ServerResponse): void {
+  const origin = req.headers.origin;
+
+  // Check if origin is allowed (also allow any *.lovable.app or *.lovableproject.com)
+  const isAllowed = origin && (
+    ALLOWED_ORIGINS.includes(origin) ||
+    origin.endsWith('.lovable.app') ||
+    origin.endsWith('.lovableproject.com')
+  );
+
+  if (isAllowed) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  }
+
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Max-Age', '86400');
+}
+
 function getPathname(req: IncomingMessage): string {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
   return url.pathname;
 }
 
 async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  // Set CORS headers on all responses
+  setCorsHeaders(req, res);
+
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
   const pathname = getPathname(req);
 
   // Health check (no auth required)
