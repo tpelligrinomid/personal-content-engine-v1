@@ -305,6 +305,14 @@ export async function handleAdhoc(
       }
     }
 
+    // Update last_generation_at if we generated any content
+    if (results.length > 0) {
+      await db
+        .from('user_settings')
+        .update({ last_generation_at: new Date().toISOString() })
+        .eq('user_id', userId);
+    }
+
     sendJson(res, 201, {
       success: true,
       data: {

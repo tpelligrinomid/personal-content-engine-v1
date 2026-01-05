@@ -144,6 +144,14 @@ async function crawlSources(): Promise<{ crawled: number; documents: number; err
     totalCrawled += result.crawled;
     totalDocuments += result.documents;
     allErrors.push(...result.errors);
+
+    // Update last_crawl_at for this user
+    if (result.crawled > 0) {
+      await db
+        .from('user_settings')
+        .update({ last_crawl_at: new Date().toISOString() })
+        .eq('user_id', settings.user_id);
+    }
   }
 
   return { crawled: totalCrawled, documents: totalDocuments, errors: allErrors };
