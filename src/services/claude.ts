@@ -44,7 +44,7 @@ Content to analyze:
 
 export async function extractFromContent(
   content: string,
-  contentType: 'meeting' | 'voice_note' | 'trend' | 'manual_note' | 'document'
+  contentType: 'meeting' | 'voice_note' | 'trend' | 'manual_note' | 'podcast' | 'document'
 ): Promise<ExtractionResult> {
   const claude = getClaudeClient();
 
@@ -90,6 +90,8 @@ function getContextPrefix(contentType: string): string {
       return '[This is a trend/signal from external sources. Focus on the main insight and why it matters.]';
     case 'manual_note':
       return '[This is a manually written note. Extract the core message and key points.]';
+    case 'podcast':
+      return '[This is a podcast episode transcript. Focus on the main discussion points, insights shared, and any notable quotes or perspectives.]';
     case 'document':
       return '[This is a document/article. Summarize the main argument and key takeaways.]';
     default:

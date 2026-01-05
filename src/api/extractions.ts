@@ -72,7 +72,7 @@ async function handleCreate(req: IncomingMessage, res: ServerResponse): Promise<
 
     const db = getDb();
     let content: string;
-    let contentType: 'meeting' | 'voice_note' | 'trend' | 'manual_note' | 'document';
+    let contentType: 'meeting' | 'voice_note' | 'trend' | 'manual_note' | 'podcast' | 'document';
 
     if (body.source_material_id) {
       const { data: sourceMaterial, error } = await db

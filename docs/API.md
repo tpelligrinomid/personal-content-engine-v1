@@ -515,7 +515,7 @@ Get single document with full content and extraction.
 
 ### Source Materials (Personal Content)
 
-Source materials are personal inputs: meeting transcripts, voice notes, manual notes.
+Source materials are personal inputs: meeting transcripts, podcast transcripts, voice notes, manual notes.
 
 #### GET /api/source-materials
 List all source materials.
@@ -537,7 +537,7 @@ List all source materials.
 }
 ```
 
-**Source material types:** `meeting`, `voice_note`, `manual_note`, `trend`
+**Source material types:** `meeting`, `podcast`, `voice_note`, `manual_note`, `trend`
 
 #### POST /api/ingest/voice-note
 Ingest a voice note.
@@ -583,6 +583,23 @@ Accepts either:
 - Fireflies API response format: `{ data: { transcript: {...} } }`
 - Downloaded JSON format: `{ title: "Meeting", sentences: [...] }`
 - Raw sentences array with `?title=` query param
+
+#### POST /api/ingest/podcast
+Ingest a podcast episode transcript.
+
+**Request Body:**
+```json
+{
+  "title": "Episode 42: AI in Marketing",
+  "content": "The full transcript text...",
+  "source_url": "https://podcast.com/episode-42",
+  "occurred_at": "2026-01-03T10:00:00Z"
+}
+```
+
+**Required fields:** `title`, `content`
+
+**Optional fields:** `source_url` (link to episode), `occurred_at` (recording/publish date)
 
 ---
 
@@ -832,6 +849,7 @@ Manually trigger crawl and extraction jobs.
 
 ### Source Material Types
 - `meeting` - Meeting transcript (from Fireflies)
+- `podcast` - Podcast episode transcript
 - `voice_note` - Voice note transcript
 - `manual_note` - Manually entered note
 - `trend` - Trend or signal note

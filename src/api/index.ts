@@ -17,3 +17,4 @@ export { handleStats } from './stats';
 export { handleSettings } from './settings';
 export { handleUsers } from './users';
 export { handleAllowedEmails } from './allowed-emails';
+export { handlePodcasts } from './podcasts';
