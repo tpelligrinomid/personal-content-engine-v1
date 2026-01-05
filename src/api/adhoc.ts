@@ -239,7 +239,7 @@ export async function handleAdhoc(
       try {
         console.log(`[Adhoc] Generating ${format}...`);
 
-        const prompt = await getTemplatePrompt(format);
+        const prompt = await getTemplatePrompt(format, userId);
         if (!prompt) {
           errors.push(`${format}: Template not found`);
           continue;

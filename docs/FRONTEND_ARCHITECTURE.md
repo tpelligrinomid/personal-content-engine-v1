@@ -305,6 +305,36 @@ Check role via `GET /api/settings` → `data.role`
 
 ---
 
+### 13. Admin: System Templates (`/admin/templates`)
+**Purpose:** Manage default prompts for all users (admin only)
+
+**API:** `GET /api/admin/templates`, `GET /api/admin/templates/:key`, `PUT /api/admin/templates/:key`, `DELETE /api/admin/templates/:key`
+
+**Gate:** Check `settings.role === 'admin'` before showing
+
+**Template Priority:**
+1. User override (per-user) - managed via regular `/templates` page
+2. Admin system default - managed via this admin page
+3. Code default - hardcoded fallback
+
+**Layout:**
+- Card list of all template types:
+  - Template name and description
+  - "Modified" badge if has admin override
+  - Last modified timestamp
+- Click to expand/edit:
+  - Prompt textarea (large, ~20 lines)
+  - Name and description fields
+  - "View Code Default" button to see original
+  - "Reset to Code Default" button (calls DELETE)
+  - Save button
+
+**Template Keys:**
+- `linkedin_post`, `linkedin_pov`, `twitter_post`, `twitter_thread`
+- `blog_post`, `newsletter`, `video_script`, `podcast_segment`
+
+---
+
 ## Component Library Suggestions
 
 | Component | Usage |
@@ -331,6 +361,7 @@ Dashboard | Content | Sources | Documents | Generate | Templates | Settings
 Dashboard | Content | Sources | Documents | Generate | Templates | Settings | Admin ▼
                                                                               └─ Users
                                                                               └─ Allowed Emails
+                                                                              └─ System Templates
 ```
 
 ---
@@ -415,6 +446,14 @@ PATCH /api/users/:id          → Update role
 GET    /api/allowed-emails           → List all allowed emails
 POST   /api/allowed-emails           → Add email { email: "..." }
 DELETE /api/allowed-emails/:email    → Remove email
+```
+
+### Admin: System Templates (admin only)
+```
+GET    /api/admin/templates          → List all templates with override status
+GET    /api/admin/templates/:key     → Get template with code default
+PUT    /api/admin/templates/:key     → Update system default { prompt, name?, description? }
+DELETE /api/admin/templates/:key     → Reset to code default
 ```
 
 ### Dashboard

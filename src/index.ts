@@ -8,7 +8,7 @@
  */
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
-import { handleSourceMaterials, handleExtractions, handleExtractionsBatch, handleFireflies, handleVoiceNotes, handleTrends, handleManualNotes, handleGenerate, handleTrendSources, handleCrawl, handleDigestRoute, handleScheduler, handleTemplates, handleAdhoc, handleAssets, handleDocuments, handleStats, handleSettings, handleUsers, handleAllowedEmails, handlePodcasts } from './api';
+import { handleSourceMaterials, handleExtractions, handleExtractionsBatch, handleFireflies, handleVoiceNotes, handleTrends, handleManualNotes, handleGenerate, handleTrendSources, handleCrawl, handleDigestRoute, handleScheduler, handleTemplates, handleAdhoc, handleAssets, handleDocuments, handleStats, handleSettings, handleUsers, handleAllowedEmails, handlePodcasts, handleAdminTemplates } from './api';
 import { startScheduler } from './services/scheduler';
 import { validateAuth, sendUnauthorized, isPublicPath, setRequestUserId, setRequestUserRole } from './middleware/auth';
 import { getDb } from './services/db';
@@ -176,6 +176,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   if (pathname.startsWith('/api/allowed-emails')) {
     return handleAllowedEmails(req, res, pathname);
+  }
+
+  if (pathname.startsWith('/api/admin/templates')) {
+    return handleAdminTemplates(req, res, pathname);
   }
 
   // Default response

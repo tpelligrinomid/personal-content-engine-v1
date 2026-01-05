@@ -322,43 +322,66 @@ export function getAvailableTemplates(): Array<{
 }
 
 /**
- * Get the prompt for a template (checks DB override first, then code default)
+ * Get the prompt for a template
+ * Priority: 1. User override → 2. Admin system default → 3. Code default
  */
-export async function getTemplatePrompt(templateKey: string): Promise<string | null> {
+export async function getTemplatePrompt(templateKey: string, userId?: string): Promise<string | null> {
   const defaultTemplate = DEFAULT_TEMPLATES[templateKey];
 
   if (!defaultTemplate) {
     return null; // Unknown template
   }
 
-  // Check for DB override
   const db = getDb();
-  const { data: override } = await db
+
+  // 1. Check for user-specific override (if userId provided)
+  if (userId) {
+    const { data: userOverride } = await db
+      .from('templates')
+      .select('prompt')
+      .eq('template_key', templateKey)
+      .eq('user_id', userId)
+      .eq('active', true)
+      .single();
+
+    if (userOverride?.prompt) {
+      console.log(`[Templates] Using user override for: ${templateKey}`);
+      return userOverride.prompt;
+    }
+  }
+
+  // 2. Check for admin-set system default (user_id IS NULL)
+  const { data: systemDefault } = await db
     .from('templates')
     .select('prompt')
     .eq('template_key', templateKey)
+    .is('user_id', null)
     .eq('active', true)
     .single();
 
-  if (override && override.prompt) {
-    console.log(`[Templates] Using DB override for: ${templateKey}`);
-    return override.prompt;
+  if (systemDefault?.prompt) {
+    console.log(`[Templates] Using admin system default for: ${templateKey}`);
+    return systemDefault.prompt;
   }
 
-  console.log(`[Templates] Using default for: ${templateKey}`);
+  // 3. Fall back to code default
+  console.log(`[Templates] Using code default for: ${templateKey}`);
   return defaultTemplate.defaultPrompt;
 }
 
 /**
- * Get full template info including whether it has an override
+ * Get full template info including override status
+ * Priority: 1. User override → 2. Admin system default → 3. Code default
  */
-export async function getTemplateInfo(templateKey: string): Promise<{
+export async function getTemplateInfo(templateKey: string, userId?: string): Promise<{
   key: string;
   name: string;
   description: string;
   suggestedInputs: string;
   prompt: string;
-  hasOverride: boolean;
+  hasUserOverride: boolean;
+  hasSystemOverride: boolean;
+  codeDefault: string;
 } | null> {
   const defaultTemplate = DEFAULT_TEMPLATES[templateKey];
 
@@ -367,21 +390,52 @@ export async function getTemplateInfo(templateKey: string): Promise<{
   }
 
   const db = getDb();
-  const { data: override } = await db
+
+  // Check for user override
+  let userOverride = null;
+  if (userId) {
+    const { data } = await db
+      .from('templates')
+      .select('*')
+      .eq('template_key', templateKey)
+      .eq('user_id', userId)
+      .eq('active', true)
+      .single();
+    userOverride = data;
+  }
+
+  // Check for system default
+  const { data: systemDefault } = await db
     .from('templates')
     .select('*')
     .eq('template_key', templateKey)
+    .is('user_id', null)
     .eq('active', true)
     .single();
 
+  // Determine which prompt to use
+  const activePrompt = userOverride?.prompt || systemDefault?.prompt || defaultTemplate.defaultPrompt;
+  const activeName = userOverride?.name || systemDefault?.name || defaultTemplate.name;
+  const activeDescription = userOverride?.description || systemDefault?.description || defaultTemplate.description;
+
   return {
     key: defaultTemplate.key,
-    name: override?.name || defaultTemplate.name,
-    description: override?.description || defaultTemplate.description,
+    name: activeName,
+    description: activeDescription,
     suggestedInputs: defaultTemplate.suggestedInputs,
-    prompt: override?.prompt || defaultTemplate.defaultPrompt,
-    hasOverride: !!override,
+    prompt: activePrompt,
+    hasUserOverride: !!userOverride,
+    hasSystemOverride: !!systemDefault,
+    codeDefault: defaultTemplate.defaultPrompt,
   };
+}
+
+/**
+ * Get the code default prompt for a template (used by admin to see original)
+ */
+export function getCodeDefaultPrompt(templateKey: string): string | null {
+  const defaultTemplate = DEFAULT_TEMPLATES[templateKey];
+  return defaultTemplate?.defaultPrompt || null;
 }
 
 /**
