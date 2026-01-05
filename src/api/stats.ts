@@ -49,7 +49,7 @@ interface DashboardStats {
       id: string;
       title: string;
       url: string;
-      crawled_at: string;
+      fetched_at: string;
     }>;
   };
   activity: {
@@ -95,14 +95,14 @@ export async function handleStats(
       documentsThisWeek,
       userSettings,
     ] = await Promise.all([
-      // Counts
-      db.from('source_materials').select('id', { count: 'exact', head: true }).eq('user_id', userId),
-      db.from('documents').select('id', { count: 'exact', head: true }).eq('user_id', userId),
-      db.from('extractions').select('id', { count: 'exact', head: true }).eq('user_id', userId),
+      // Counts (exclude archived)
+      db.from('source_materials').select('id', { count: 'exact', head: true }).eq('user_id', userId).is('archived_at', null),
+      db.from('documents').select('id', { count: 'exact', head: true }).eq('user_id', userId).is('archived_at', null),
+      db.from('extractions').select('id', { count: 'exact', head: true }).eq('user_id', userId).is('archived_at', null),
       db.from('assets').select('id, status, type').eq('user_id', userId),
       db.from('trend_sources').select('id', { count: 'exact', head: true }).eq('user_id', userId),
 
-      // Recent items
+      // Recent items (exclude archived)
       db
         .from('assets')
         .select('id, type, title, status, created_at')
@@ -113,21 +113,24 @@ export async function handleStats(
         .from('source_materials')
         .select('id, title, type, created_at')
         .eq('user_id', userId)
+        .is('archived_at', null)
         .order('created_at', { ascending: false })
         .limit(5),
       db
         .from('documents')
-        .select('id, title, url, crawled_at')
+        .select('id, title, url, fetched_at')
         .eq('user_id', userId)
-        .order('crawled_at', { ascending: false })
+        .is('archived_at', null)
+        .order('fetched_at', { ascending: false })
         .limit(5),
 
-      // This week activity
+      // This week activity (exclude archived)
       db
         .from('extractions')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', userId)
-        .gte('extracted_at', oneWeekAgo),
+        .is('archived_at', null)
+        .gte('created_at', oneWeekAgo),
       db
         .from('assets')
         .select('id', { count: 'exact', head: true })
@@ -137,7 +140,8 @@ export async function handleStats(
         .from('documents')
         .select('id', { count: 'exact', head: true })
         .eq('user_id', userId)
-        .gte('crawled_at', oneWeekAgo),
+        .is('archived_at', null)
+        .gte('fetched_at', oneWeekAgo),
 
       // User settings
       db
