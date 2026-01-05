@@ -19,6 +19,11 @@ const EXTRACTIONS_PER_RUN = parseInt(process.env.EXTRACTIONS_PER_RUN || '10', 10
 const DELAY_BETWEEN_SOURCES_MS = 5000; // 5 seconds between sources
 
 let isRunning = false;
+let lastRunAt: string | null = null;
+let lastRunResult: {
+  crawl: { crawled: number; documents: number; errors: string[] };
+  extraction: { extracted: number; errors: string[] };
+} | null = null;
 
 function hashContent(content: string): string {
   return createHash('sha256').update(content).digest('hex');
@@ -196,7 +201,11 @@ async function runScheduledJob(): Promise<void> {
     const extractResult = await runExtractions();
     console.log(`[Scheduler] Extraction complete: ${extractResult.extracted} new extractions`);
 
-    console.log(`[Scheduler] Job finished at ${new Date().toISOString()}`);
+    // Track results
+    lastRunAt = new Date().toISOString();
+    lastRunResult = { crawl: crawlResult, extraction: extractResult };
+
+    console.log(`[Scheduler] Job finished at ${lastRunAt}`);
   } catch (err) {
     console.error('[Scheduler] Job failed:', err);
   } finally {
@@ -236,12 +245,25 @@ export async function triggerManualRun(): Promise<{
   try {
     const crawl = await crawlSources();
     const extraction = await runExtractions();
+
+    // Track results
+    lastRunAt = new Date().toISOString();
+    lastRunResult = { crawl, extraction };
+
     return { crawl, extraction };
   } finally {
     isRunning = false;
   }
 }
 
-export function getSchedulerStatus(): { isRunning: boolean; schedule: string } {
-  return { isRunning, schedule: CRAWL_SCHEDULE };
+export function getSchedulerStatus(): {
+  isRunning: boolean;
+  schedule: string;
+  lastRunAt: string | null;
+  lastRunResult: {
+    crawl: { crawled: number; documents: number; errors: string[] };
+    extraction: { extracted: number; errors: string[] };
+  } | null;
+} {
+  return { isRunning, schedule: CRAWL_SCHEDULE, lastRunAt, lastRunResult };
 }

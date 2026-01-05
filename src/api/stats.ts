@@ -6,6 +6,7 @@
 
 import { IncomingMessage, ServerResponse } from 'http';
 import { getDb } from '../services/db';
+import { getSchedulerStatus } from '../services/scheduler';
 
 interface ApiResponse<T = unknown> {
   success: boolean;
@@ -55,6 +56,15 @@ interface DashboardStats {
     extractions_this_week: number;
     assets_this_week: number;
     documents_this_week: number;
+  };
+  scheduler: {
+    isRunning: boolean;
+    schedule: string;
+    lastRunAt: string | null;
+    lastRunResult: {
+      crawl: { crawled: number; documents: number; errors: string[] };
+      extraction: { extracted: number; errors: string[] };
+    } | null;
   };
 }
 
@@ -157,6 +167,7 @@ export async function handleStats(
         assets_this_week: assetsThisWeek.count || 0,
         documents_this_week: documentsThisWeek.count || 0,
       },
+      scheduler: getSchedulerStatus(),
     };
 
     sendJson(res, 200, { success: true, data: stats });
