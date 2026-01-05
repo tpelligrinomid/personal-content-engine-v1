@@ -8,9 +8,10 @@
  */
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
-import { handleSourceMaterials, handleExtractions, handleExtractionsBatch, handleFireflies, handleVoiceNotes, handleTrends, handleManualNotes, handleGenerate, handleTrendSources, handleCrawl, handleDigestRoute, handleScheduler, handleTemplates, handleAdhoc, handleAssets, handleDocuments, handleStats } from './api';
+import { handleSourceMaterials, handleExtractions, handleExtractionsBatch, handleFireflies, handleVoiceNotes, handleTrends, handleManualNotes, handleGenerate, handleTrendSources, handleCrawl, handleDigestRoute, handleScheduler, handleTemplates, handleAdhoc, handleAssets, handleDocuments, handleStats, handleSettings, handleUsers, handleAllowedEmails } from './api';
 import { startScheduler } from './services/scheduler';
-import { validateApiKey, sendUnauthorized, isPublicPath } from './middleware/auth';
+import { validateAuth, sendUnauthorized, isPublicPath, setRequestUserId, setRequestUserRole } from './middleware/auth';
+import { getDb } from './services/db';
 
 const PORT = process.env.PORT || 3000;
 
@@ -31,10 +32,27 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   // Authenticate API requests
   if (!isPublicPath(pathname)) {
-    const auth = validateApiKey(req);
-    if (!auth.authorized) {
+    const auth = await validateAuth(req);
+    if (!auth.authorized || !auth.userId) {
       sendUnauthorized(res, auth.error || 'Unauthorized');
       return;
+    }
+    setRequestUserId(req, auth.userId);
+
+    // Fetch user role from settings
+    try {
+      const db = getDb();
+      const { data: settings } = await db
+        .from('user_settings')
+        .select('role')
+        .eq('user_id', auth.userId)
+        .single();
+
+      if (settings?.role) {
+        setRequestUserRole(req, settings.role);
+      }
+    } catch {
+      // Default to 'user' role if settings not found
     }
   }
 
@@ -105,6 +123,18 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   if (pathname === '/api/stats') {
     return handleStats(req, res);
+  }
+
+  if (pathname === '/api/settings') {
+    return handleSettings(req, res);
+  }
+
+  if (pathname.startsWith('/api/users')) {
+    return handleUsers(req, res, pathname);
+  }
+
+  if (pathname.startsWith('/api/allowed-emails')) {
+    return handleAllowedEmails(req, res, pathname);
   }
 
   // Default response

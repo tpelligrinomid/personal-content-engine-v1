@@ -2,6 +2,7 @@
  * Internal scheduler for background crawling and extraction
  *
  * Runs on cron schedule to avoid HTTP timeout issues
+ * Now user-aware: processes each user's sources based on their settings
  */
 
 import cron from 'node-cron';
@@ -9,7 +10,7 @@ import { createHash } from 'crypto';
 import { getDb } from './db';
 import { crawlBlog, scrapePage } from './firecrawl';
 import { extractFromContent, EXTRACTION_MODEL } from './claude';
-import { TrendSource, DocumentInsert, ExtractionInsert } from '../types';
+import { TrendSource, DocumentInsert, ExtractionInsert, UserSettings } from '../types';
 
 // Configuration
 const CRAWL_SCHEDULE = process.env.CRAWL_SCHEDULE || '0 */6 * * *'; // Every 6 hours
@@ -33,26 +34,26 @@ async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function crawlSources(): Promise<{ crawled: number; documents: number; errors: string[] }> {
+async function crawlSourcesForUser(userId: string): Promise<{ crawled: number; documents: number; errors: string[] }> {
   const db = getDb();
   const errors: string[] = [];
   let documentsCreated = 0;
 
-  // Get active Tier 1 sources, prioritize those not recently crawled
+  // Get active Tier 1 sources for this user, prioritize those not recently crawled
   const { data: sources, error: sourcesError } = await db
     .from('trend_sources')
     .select('*')
+    .eq('user_id', userId)
     .eq('status', 'active')
     .eq('tier', 1)
     .order('updated_at', { ascending: true })
     .limit(SOURCES_PER_RUN);
 
   if (sourcesError || !sources || sources.length === 0) {
-    console.log('[Scheduler] No sources to crawl');
     return { crawled: 0, documents: 0, errors: [] };
   }
 
-  console.log(`[Scheduler] Crawling ${sources.length} sources...`);
+  console.log(`[Scheduler] Crawling ${sources.length} sources for user ${userId}...`);
 
   for (const source of sources as TrendSource[]) {
     try {
@@ -68,11 +69,12 @@ async function crawlSources(): Promise<{ crawled: number; documents: number; err
       const pages = await crawlBlog(crawlUrl, { limit: ARTICLES_PER_SOURCE });
 
       for (const page of pages) {
-        // Check for duplicates
+        // Check for duplicates for this user
         const dedupeHash = hashContent(page.content);
         const { data: existing } = await db
           .from('documents')
           .select('id')
+          .eq('user_id', userId)
           .or(`url.eq.${page.url},dedupe_hash.eq.${dedupeHash}`)
           .limit(1);
 
@@ -81,6 +83,7 @@ async function crawlSources(): Promise<{ crawled: number; documents: number; err
         }
 
         const insert: DocumentInsert = {
+          user_id: userId,
           trend_source_id: source.id,
           url: page.url,
           canonical_url: null,
@@ -119,15 +122,43 @@ async function crawlSources(): Promise<{ crawled: number; documents: number; err
   return { crawled: sources.length, documents: documentsCreated, errors };
 }
 
-async function runExtractions(): Promise<{ extracted: number; errors: string[] }> {
+async function crawlSources(): Promise<{ crawled: number; documents: number; errors: string[] }> {
+  const db = getDb();
+  const allErrors: string[] = [];
+  let totalCrawled = 0;
+  let totalDocuments = 0;
+
+  // Get all users with crawl_enabled
+  const { data: usersSettings } = await db
+    .from('user_settings')
+    .select('user_id')
+    .eq('crawl_enabled', true);
+
+  if (!usersSettings || usersSettings.length === 0) {
+    console.log('[Scheduler] No users with crawl enabled');
+    return { crawled: 0, documents: 0, errors: [] };
+  }
+
+  for (const settings of usersSettings as { user_id: string }[]) {
+    const result = await crawlSourcesForUser(settings.user_id);
+    totalCrawled += result.crawled;
+    totalDocuments += result.documents;
+    allErrors.push(...result.errors);
+  }
+
+  return { crawled: totalCrawled, documents: totalDocuments, errors: allErrors };
+}
+
+async function runExtractionsForUser(userId: string): Promise<{ extracted: number; errors: string[] }> {
   const db = getDb();
   const errors: string[] = [];
   let extracted = 0;
 
-  // Get documents without extractions
+  // Get documents without extractions for this user
   const { data: existingExtractions } = await db
     .from('extractions')
     .select('document_id')
+    .eq('user_id', userId)
     .not('document_id', 'is', null);
 
   const existingDocIds = new Set(
@@ -137,13 +168,13 @@ async function runExtractions(): Promise<{ extracted: number; errors: string[] }
   const { data: documents } = await db
     .from('documents')
     .select('id, title, raw_text')
+    .eq('user_id', userId)
     .eq('status', 'parsed')
     .not('raw_text', 'is', null)
     .order('created_at', { ascending: true })
     .limit(EXTRACTIONS_PER_RUN * 2); // Fetch more to filter
 
   if (!documents || documents.length === 0) {
-    console.log('[Scheduler] No documents to extract');
     return { extracted: 0, errors: [] };
   }
 
@@ -151,7 +182,7 @@ async function runExtractions(): Promise<{ extracted: number; errors: string[] }
     (doc: { id: string }) => !existingDocIds.has(doc.id)
   ).slice(0, EXTRACTIONS_PER_RUN);
 
-  console.log(`[Scheduler] Extracting ${toExtract.length} documents...`);
+  console.log(`[Scheduler] Extracting ${toExtract.length} documents for user ${userId}...`);
 
   for (const doc of toExtract as { id: string; title: string | null; raw_text: string }[]) {
     try {
@@ -160,6 +191,7 @@ async function runExtractions(): Promise<{ extracted: number; errors: string[] }
       const result = await extractFromContent(doc.raw_text, 'document');
 
       const insert: ExtractionInsert = {
+        user_id: userId,
         source_material_id: null,
         document_id: doc.id,
         summary: result.summary,
@@ -181,6 +213,31 @@ async function runExtractions(): Promise<{ extracted: number; errors: string[] }
   }
 
   return { extracted, errors };
+}
+
+async function runExtractions(): Promise<{ extracted: number; errors: string[] }> {
+  const db = getDb();
+  const allErrors: string[] = [];
+  let totalExtracted = 0;
+
+  // Get all users with crawl_enabled (extraction follows crawl)
+  const { data: usersSettings } = await db
+    .from('user_settings')
+    .select('user_id')
+    .eq('crawl_enabled', true);
+
+  if (!usersSettings || usersSettings.length === 0) {
+    console.log('[Scheduler] No users with crawl enabled');
+    return { extracted: 0, errors: [] };
+  }
+
+  for (const settings of usersSettings as { user_id: string }[]) {
+    const result = await runExtractionsForUser(settings.user_id);
+    totalExtracted += result.extracted;
+    allErrors.push(...result.errors);
+  }
+
+  return { extracted: totalExtracted, errors: allErrors };
 }
 
 async function runScheduledJob(): Promise<void> {

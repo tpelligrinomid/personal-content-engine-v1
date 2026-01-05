@@ -7,6 +7,7 @@
 
 import { IncomingMessage, ServerResponse } from 'http';
 import { getDb } from '../services/db';
+import { requireUserId } from '../middleware/auth';
 
 interface ApiResponse<T = unknown> {
   success: boolean;
@@ -31,6 +32,7 @@ function getQueryParams(req: IncomingMessage): URLSearchParams {
 
 async function handleList(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
+    const userId = requireUserId(req);
     const params = getQueryParams(req);
     const sourceId = params.get('source_id');
     const extracted = params.get('extracted');
@@ -49,6 +51,7 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
         trend_source_id,
         trend_sources (id, name, url)
       `, { count: 'exact' })
+      .eq('user_id', userId)
       .order('crawled_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -72,6 +75,7 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
         const { data: extractions } = await db
           .from('extractions')
           .select('document_id')
+          .eq('user_id', userId)
           .in('document_id', docIds);
 
         const extractedIds = new Set(extractions?.map((e: any) => e.document_id) || []);
@@ -108,6 +112,7 @@ async function handleGet(
   id: string
 ): Promise<void> {
   try {
+    const userId = requireUserId(req);
     const db = getDb();
 
     // Get document with source and extraction
@@ -119,6 +124,7 @@ async function handleGet(
         extractions (id, summary, key_points, topics, extracted_at)
       `)
       .eq('id', id)
+      .eq('user_id', userId)
       .single();
 
     if (error) {

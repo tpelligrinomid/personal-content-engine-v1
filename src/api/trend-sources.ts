@@ -9,6 +9,7 @@
 
 import { IncomingMessage, ServerResponse } from 'http';
 import { getDb } from '../services/db';
+import { requireUserId } from '../middleware/auth';
 import { TrendSource, TrendSourceInsert } from '../types';
 
 interface ApiResponse<T = unknown> {
@@ -46,6 +47,7 @@ function extractIdFromPath(pathname: string): string | null {
 
 async function handleCreate(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
+    const userId = requireUserId(req);
     const body = (await parseBody(req)) as Record<string, unknown>;
 
     if (!body.name || typeof body.name !== 'string') {
@@ -56,6 +58,7 @@ async function handleCreate(req: IncomingMessage, res: ServerResponse): Promise<
     const db = getDb();
 
     const insert: TrendSourceInsert = {
+      user_id: userId,
       name: body.name,
       domain: (body.domain as string) || null,
       feed_url: (body.feed_url as string) || null,
@@ -91,6 +94,7 @@ async function handleCreate(req: IncomingMessage, res: ServerResponse): Promise<
 
 async function handleList(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
+    const userId = requireUserId(req);
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
     const tier = url.searchParams.get('tier');
     const status = url.searchParams.get('status');
@@ -99,6 +103,7 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
     let query = db
       .from('trend_sources')
       .select('*')
+      .eq('user_id', userId)
       .order('tier', { ascending: true })
       .order('name', { ascending: true });
 
@@ -130,6 +135,7 @@ async function handleUpdate(
   id: string
 ): Promise<void> {
   try {
+    const userId = requireUserId(req);
     const body = (await parseBody(req)) as Record<string, unknown>;
     const db = getDb();
 
@@ -150,6 +156,7 @@ async function handleUpdate(
       .from('trend_sources')
       .update(updates)
       .eq('id', id)
+      .eq('user_id', userId)
       .select()
       .single();
 
@@ -175,9 +182,10 @@ async function handleDelete(
   id: string
 ): Promise<void> {
   try {
+    const userId = requireUserId(req);
     const db = getDb();
 
-    const { error } = await db.from('trend_sources').delete().eq('id', id);
+    const { error } = await db.from('trend_sources').delete().eq('id', id).eq('user_id', userId);
 
     if (error) {
       console.error('Database error:', error);

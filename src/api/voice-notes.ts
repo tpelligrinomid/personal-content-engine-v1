@@ -8,6 +8,7 @@
 
 import { IncomingMessage, ServerResponse } from 'http';
 import { getDb } from '../services/db';
+import { requireUserId } from '../middleware/auth';
 import { SourceMaterial, SourceMaterialInsert } from '../types';
 
 interface VoiceNoteRequest {
@@ -57,7 +58,6 @@ function validateRequest(body: unknown): body is VoiceNoteRequest {
 }
 
 function generateTitle(content: string): string {
-  // Use first ~50 chars of content as title, or date-based fallback
   const preview = content.slice(0, 50).trim();
   if (preview.length > 0) {
     return preview + (content.length > 50 ? '...' : '');
@@ -67,6 +67,7 @@ function generateTitle(content: string): string {
 
 async function handleIngest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
+    const userId = requireUserId(req);
     const body = await parseBody(req);
 
     if (!validateRequest(body)) {
@@ -83,6 +84,7 @@ async function handleIngest(req: IncomingMessage, res: ServerResponse): Promise<
     const occurredAt = body.occurred_at || new Date().toISOString();
 
     const insert: SourceMaterialInsert = {
+      user_id: userId,
       type: 'voice_note',
       title,
       content: body.content,

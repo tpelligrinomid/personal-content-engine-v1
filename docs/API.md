@@ -5,18 +5,59 @@
 https://personal-content-engine-v1.onrender.com
 ```
 
+## Initial Setup (Admin Bootstrap)
+
+Before using the system, you must set up the first admin user:
+
+### 1. Add your email to the allowlist (via Supabase SQL Editor)
+```sql
+INSERT INTO allowed_emails (email) VALUES ('your@gmail.com');
+```
+
+### 2. Sign in via the frontend
+Use the Google OAuth sign-in button. This creates your user in Supabase Auth.
+
+### 3. Make yourself an admin (via Supabase SQL Editor)
+```sql
+-- Find your user_id
+SELECT id, email FROM auth.users;
+
+-- Set yourself as admin
+UPDATE user_settings SET role = 'admin' WHERE user_id = 'YOUR_USER_ID';
+```
+
+### 4. Invite other users
+Once you're an admin, use the `/api/allowed-emails` endpoint to add other users:
+```javascript
+await fetch('/api/allowed-emails', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({ email: 'friend@gmail.com' })
+});
+```
+
+---
+
 ## Authentication
 
-All API endpoints (except `/health` and `/`) require authentication via API key.
+All API endpoints (except `/health` and `/`) require authentication via Supabase JWT token.
 
 **Header Format:**
 ```
-Authorization: Bearer <API_KEY>
+Authorization: Bearer <supabase_access_token>
 ```
+
+**How to get a token:**
+1. User signs in via Supabase Auth (Google OAuth)
+2. Supabase returns an `access_token` in the session
+3. Include this token in the Authorization header
 
 **Example:**
 ```bash
-curl -H "Authorization: Bearer your-api-key-here" \
+curl -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
   https://personal-content-engine-v1.onrender.com/api/stats
 ```
 
@@ -28,7 +69,46 @@ curl -H "Authorization: Bearer your-api-key-here" \
 }
 ```
 
-**Note:** If no `API_KEY` environment variable is set on the server, authentication is disabled (development mode).
+### Email Allowlist (Invite-Only Access)
+
+This system uses an **invite-only** access model. Users must be pre-approved before they can access the API.
+
+**How it works:**
+1. Admin adds a user's email to the `allowed_emails` table
+2. User signs in with Google OAuth (their Google account must use that email)
+3. Backend verifies the email is in the allowlist before granting access
+4. If not on the list, user receives: `"Email not authorized. Contact an administrator for access."`
+
+**Frontend implementation:**
+```javascript
+// Sign in with Google
+const { data, error } = await supabase.auth.signInWithOAuth({
+  provider: 'google'
+});
+
+// After sign-in, use the session token for API calls
+const session = await supabase.auth.getSession();
+const token = session.data.session?.access_token;
+
+fetch('/api/stats', {
+  headers: {
+    'Authorization': `Bearer ${token}`
+  }
+});
+```
+
+**Note:** Even if a user successfully authenticates with Google, they will be rejected by the API if their email is not in the allowlist.
+
+---
+
+## Multi-User Architecture
+
+The Personal Content Engine supports multiple users with complete data isolation:
+
+- Each user has their own trend sources, documents, assets, and content
+- No data is shared between users
+- Users can configure their own crawl schedules and content preferences
+- **Roles:** `admin` (can manage users) or `user` (standard access)
 
 ---
 
@@ -42,6 +122,203 @@ The Personal Content Engine is a backend system that:
 ---
 
 ## Endpoints
+
+### User Settings
+
+#### GET /api/settings
+Get current user's settings.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "uuid",
+    "user_id": "uuid",
+    "role": "user",
+    "crawl_enabled": true,
+    "crawl_schedule": "daily",
+    "generation_enabled": true,
+    "generation_schedule": "weekly_sunday",
+    "generation_time": "08:00",
+    "content_formats": ["linkedin_post"],
+    "timezone": "America/New_York",
+    "last_crawl_at": "2026-01-04T10:00:00Z",
+    "last_generation_at": "2026-01-01T08:00:00Z",
+    "created_at": "2026-01-01T00:00:00Z",
+    "updated_at": "2026-01-04T10:00:00Z"
+  }
+}
+```
+
+#### PATCH /api/settings
+Update current user's settings.
+
+**Request Body:**
+```json
+{
+  "crawl_enabled": true,
+  "crawl_schedule": "twice_daily",
+  "generation_enabled": true,
+  "generation_schedule": "weekly_monday",
+  "generation_time": "09:00",
+  "content_formats": ["linkedin_post", "newsletter"],
+  "timezone": "America/Los_Angeles"
+}
+```
+
+All fields are optional. Only include fields you want to update.
+
+**Valid values:**
+- `crawl_schedule`: `manual`, `every_6_hours`, `twice_daily`, `daily`
+- `generation_schedule`: `manual`, `daily`, `weekly_sunday`, `weekly_monday`
+- `content_formats`: array of `linkedin_post`, `linkedin_pov`, `twitter_post`, `twitter_thread`, `blog_post`, `newsletter`
+
+**Note:** Users cannot change their own `role`. Only admins can change roles via `/api/users/:id`.
+
+---
+
+### User Management (Admin Only)
+
+These endpoints require `admin` role.
+
+#### GET /api/users
+List all users.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "uuid",
+      "user_id": "uuid",
+      "role": "admin",
+      "crawl_enabled": true,
+      "generation_enabled": true,
+      "content_formats": ["linkedin_post", "newsletter"],
+      "timezone": "America/New_York",
+      "last_crawl_at": "2026-01-04T10:00:00Z",
+      "last_generation_at": "2026-01-01T08:00:00Z",
+      "created_at": "2026-01-01T00:00:00Z"
+    }
+  ]
+}
+```
+
+#### GET /api/users/:user_id
+Get user details with content counts.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "uuid",
+    "user_id": "uuid",
+    "role": "user",
+    "crawl_enabled": true,
+    "generation_enabled": true,
+    "content_formats": ["linkedin_post"],
+    "timezone": "America/New_York",
+    "counts": {
+      "source_materials": 12,
+      "documents": 156,
+      "assets": 45,
+      "trend_sources": 8
+    }
+  }
+}
+```
+
+#### PATCH /api/users/:user_id
+Update a user's role (admin only).
+
+**Request Body:**
+```json
+{
+  "role": "admin"
+}
+```
+
+**Valid roles:** `admin`, `user`
+
+---
+
+### Allowed Emails (Admin Only)
+
+Manage the email allowlist for invite-only access.
+
+#### GET /api/allowed-emails
+List all allowed emails.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "uuid",
+      "email": "user@example.com",
+      "added_by": "admin-user-uuid",
+      "created_at": "2026-01-04T10:00:00Z"
+    }
+  ]
+}
+```
+
+#### POST /api/allowed-emails
+Add an email to the allowlist.
+
+**Request Body:**
+```json
+{
+  "email": "newuser@example.com"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "uuid",
+    "email": "newuser@example.com",
+    "added_by": "admin-user-uuid",
+    "created_at": "2026-01-04T10:00:00Z"
+  }
+}
+```
+
+**Error (409 - already exists):**
+```json
+{
+  "success": false,
+  "error": "Email already in allowlist"
+}
+```
+
+#### DELETE /api/allowed-emails/:email
+Remove an email from the allowlist.
+
+**Example:**
+```
+DELETE /api/allowed-emails/user@example.com
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "message": "Email removed from allowlist"
+  }
+}
+```
+
+**Note:** Removing an email does not immediately revoke access for users who are already signed in. Their existing JWT tokens will continue to work until they expire. To fully revoke access, you would also need to delete the user from Supabase Auth.
+
+---
 
 ### Dashboard & Stats
 
@@ -86,8 +363,6 @@ Returns overview statistics for the dashboard.
   }
 }
 ```
-
-**Note:** `lastRunAt` and `lastRunResult` are `null` until the first scheduler run.
 
 ---
 
@@ -178,24 +453,6 @@ All fields are optional. Only include fields you want to update.
 
 **Valid status values:** `draft`, `ready`, `published`, `archived`
 
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "id": "uuid",
-    "type": "linkedin_post",
-    "title": "Updated Title",
-    "content": "Updated content...",
-    "status": "ready",
-    "publish_date": "2026-01-05T10:00:00Z",
-    "published_url": "https://linkedin.com/post/123",
-    "created_at": "2026-01-04T15:07:37.238Z",
-    "updated_at": "2026-01-04T16:00:00.000Z"
-  }
-}
-```
-
 #### DELETE /api/assets/:id
 Delete an asset.
 
@@ -254,37 +511,6 @@ List crawled documents.
 #### GET /api/documents/:id
 Get single document with full content and extraction.
 
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "id": "uuid",
-    "title": "Article Title",
-    "url": "https://example.com/article",
-    "content": "Full article content...",
-    "published_at": "2026-01-03T00:00:00Z",
-    "crawled_at": "2026-01-04T10:00:00Z",
-    "trend_source_id": "uuid",
-    "trend_sources": {
-      "id": "uuid",
-      "name": "TechCrunch",
-      "url": "https://techcrunch.com",
-      "tier": 1
-    },
-    "extractions": [
-      {
-        "id": "uuid",
-        "summary": "Article summary...",
-        "key_points": ["Point 1", "Point 2", "Point 3"],
-        "topics": ["AI", "Marketing"],
-        "extracted_at": "2026-01-04T11:00:00Z"
-      }
-    ]
-  }
-}
-```
-
 ---
 
 ### Source Materials (Personal Content)
@@ -337,6 +563,27 @@ Ingest a manual note.
 }
 ```
 
+#### POST /api/ingest/trend
+Ingest a trend or signal.
+
+**Request Body:**
+```json
+{
+  "title": "Optional title",
+  "content": "The transcript or content",
+  "source_url": "https://example.com/article",
+  "occurred_at": "2026-01-03T10:00:00Z"
+}
+```
+
+#### POST /api/ingest/fireflies
+Ingest a Fireflies meeting transcript.
+
+Accepts either:
+- Fireflies API response format: `{ data: { transcript: {...} } }`
+- Downloaded JSON format: `{ title: "Meeting", sentences: [...] }`
+- Raw sentences array with `?title=` query param
+
 ---
 
 ### Extractions (AI Summaries)
@@ -377,17 +624,6 @@ Run extraction on unprocessed content.
 |-------|------|-------------|
 | limit | number | Max items to process (default: 10) |
 
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "processed": 5,
-    "extractions": [...]
-  }
-}
-```
-
 ---
 
 ### Templates (Content Prompts)
@@ -409,30 +645,6 @@ List all available templates.
       "suggestedInputs": "1-3 extractions"
     },
     {
-      "key": "linkedin_pov",
-      "name": "LinkedIn POV Post",
-      "description": "Opinion-driven post with personal perspective",
-      "suggestedInputs": "1 extraction (preferably from meeting or voice note)"
-    },
-    {
-      "key": "twitter_post",
-      "name": "Twitter/X Post",
-      "description": "Concise tweet or short thread",
-      "suggestedInputs": "1-2 extractions"
-    },
-    {
-      "key": "twitter_thread",
-      "name": "Twitter/X Thread",
-      "description": "Multi-tweet thread breaking down a topic",
-      "suggestedInputs": "1-3 extractions"
-    },
-    {
-      "key": "blog_post",
-      "name": "Blog Post",
-      "description": "Long-form article with SEO-friendly structure",
-      "suggestedInputs": "2-5 extractions"
-    },
-    {
       "key": "newsletter",
       "name": "Newsletter (4-Section)",
       "description": "Personal Content Machine format: Signal, Lever, Pulse, Next Move",
@@ -445,23 +657,8 @@ List all available templates.
 #### GET /api/templates/:key
 Get template with full prompt.
 
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "key": "linkedin_post",
-    "name": "LinkedIn Post",
-    "description": "Professional post with hook, insight, and CTA",
-    "suggestedInputs": "1-3 extractions",
-    "prompt": "You are creating a LinkedIn post...",
-    "hasOverride": false
-  }
-}
-```
-
 #### PUT /api/templates/:key
-Create or update a template override.
+Create or update a template override (per-user customization).
 
 **Request Body:**
 ```json
@@ -514,31 +711,8 @@ Generate content from specific extractions.
 #### POST /api/generate/weekly
 Trigger full weekly content generation (runs in background).
 
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Weekly generation started in background",
-  "status_endpoint": "/api/generate/status"
-}
-```
-
 #### GET /api/generate/status
 Check generation status.
-
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "isGenerating": false,
-    "lastResult": {
-      "completedAt": "2026-01-04T15:10:00Z",
-      "assetsCreated": 12
-    }
-  }
-}
-```
 
 ---
 
@@ -553,7 +727,7 @@ List all trend sources.
 | Param | Type | Description |
 |-------|------|-------------|
 | tier | number | Filter by tier (1, 2, or 3) |
-| status | string | Filter by status: `active`, `paused`, `dead` |
+| status | string | Filter by status: `active`, `paused`, `blocked` |
 
 **Response:**
 ```json
@@ -571,7 +745,6 @@ List all trend sources.
       "status": "active",
       "trust_score": 85,
       "notes": "Great for startup news",
-      "last_crawled_at": "2026-01-04T10:00:00Z",
       "created_at": "2026-01-01T00:00:00Z"
     }
   ]
@@ -587,43 +760,46 @@ Create a new trend source.
   "name": "TechCrunch",
   "domain": "techcrunch.com",
   "feed_url": "https://techcrunch.com/feed",
-  "sitemap_url": null,
   "crawl_method": "rss",
   "tier": 1,
-  "status": "active",
-  "trust_score": 85,
-  "notes": "Great for startup news"
+  "status": "active"
 }
 ```
 
 **Required:** `name`
 
-**crawl_method values:** `rss`, `sitemap`, `html`
+**crawl_method values:** `rss`, `sitemap`, `html`, `api`, `manual`
 
-**status values:** `active`, `paused`, `dead`
+**status values:** `active`, `paused`, `blocked`
 
 **tier values:** `1` (high priority), `2` (medium), `3` (low)
 
 #### PATCH /api/trend-sources/:id
 Update a trend source.
 
-**Request Body:** (all fields optional)
-```json
-{
-  "name": "Updated Name",
-  "status": "paused",
-  "tier": 2
-}
-```
-
 #### DELETE /api/trend-sources/:id
 Delete a trend source.
 
-**Response:**
+---
+
+### Crawling
+
+#### POST /api/crawl/sources
+Crawl all active trend sources (or filter by tier).
+
+**Query Parameters:**
+| Param | Type | Description |
+|-------|------|-------------|
+| tier | number | Only crawl sources of this tier |
+| limit | number | Max articles per source (default: 10) |
+
+#### POST /api/crawl/url
+Crawl a single URL.
+
+**Request Body:**
 ```json
 {
-  "success": true,
-  "data": { "deleted": "uuid" }
+  "url": "https://example.com/article-to-scrape"
 }
 ```
 
@@ -634,18 +810,13 @@ Delete a trend source.
 #### POST /api/scheduler/trigger
 Manually trigger crawl and extraction jobs.
 
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Job started in background",
-  "note": "Check server logs for progress"
-}
-```
-
 ---
 
 ## Data Types
+
+### User Roles
+- `admin` - Can manage all users, change roles, view all user data
+- `user` - Standard access, can manage their own content
 
 ### Asset Types
 - `newsletter` - Weekly newsletter (4-section format)
@@ -665,6 +836,18 @@ Manually trigger crawl and extraction jobs.
 - `manual_note` - Manually entered note
 - `trend` - Trend or signal note
 
+### Crawl Schedules
+- `manual` - Only crawl on demand
+- `every_6_hours` - Crawl 4 times daily
+- `twice_daily` - Crawl morning and evening
+- `daily` - Crawl once per day
+
+### Generation Schedules
+- `manual` - Only generate on demand
+- `daily` - Generate every day
+- `weekly_sunday` - Generate every Sunday
+- `weekly_monday` - Generate every Monday
+
 ---
 
 ## Error Responses
@@ -679,7 +862,8 @@ All endpoints return errors in this format:
 
 Common HTTP status codes:
 - `400` - Bad request (invalid parameters)
-- `401` - Unauthorized (missing or invalid API key)
+- `401` - Unauthorized (missing or invalid token)
+- `403` - Forbidden (insufficient permissions, e.g., non-admin accessing admin endpoints)
 - `404` - Resource not found
 - `405` - Method not allowed
 - `500` - Internal server error

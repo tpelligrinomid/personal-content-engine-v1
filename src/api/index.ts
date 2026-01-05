@@ -14,3 +14,6 @@ export { handleAdhoc } from './adhoc';
 export { handleAssets } from './assets';
 export { handleDocuments } from './documents';
 export { handleStats } from './stats';
+export { handleSettings } from './settings';
+export { handleUsers } from './users';
+export { handleAllowedEmails } from './allowed-emails';

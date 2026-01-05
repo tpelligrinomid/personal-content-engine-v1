@@ -12,13 +12,34 @@ export type SourceMaterialType = 'trend' | 'meeting' | 'voice_note' | 'manual_no
 export type DocumentStatus = 'fetched' | 'parsed' | 'failed' | 'discarded';
 export type AssetType = 'newsletter' | 'blog_post' | 'linkedin_post' | 'twitter_post';
 export type AssetStatus = 'draft' | 'ready' | 'scheduled' | 'published' | 'archived';
+export type CrawlSchedule = 'manual' | 'every_6_hours' | 'twice_daily' | 'daily';
+export type GenerationSchedule = 'manual' | 'daily' | 'weekly_sunday' | 'weekly_monday';
+export type UserRole = 'admin' | 'user';
 
 // ============================================
 // TABLE TYPES
 // ============================================
 
+export interface UserSettings {
+  id: string;
+  user_id: string;
+  role: UserRole;
+  crawl_enabled: boolean;
+  crawl_schedule: CrawlSchedule;
+  generation_enabled: boolean;
+  generation_schedule: GenerationSchedule;
+  generation_time: string;
+  content_formats: string[];
+  timezone: string;
+  last_crawl_at: string | null;
+  last_generation_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface TrendSource {
   id: string;
+  user_id: string;
   name: string;
   domain: string | null;
   feed_url: string | null;
@@ -34,6 +55,7 @@ export interface TrendSource {
 
 export interface Document {
   id: string;
+  user_id: string;
   trend_source_id: string | null;
   url: string;
   canonical_url: string | null;
@@ -49,6 +71,7 @@ export interface Document {
 
 export interface SourceMaterial {
   id: string;
+  user_id: string;
   type: SourceMaterialType;
   title: string | null;
   content: string;
@@ -65,6 +88,7 @@ export interface Tag {
 
 export interface Asset {
   id: string;
+  user_id: string;
   type: AssetType;
   title: string | null;
   content: string;
@@ -82,6 +106,7 @@ export interface AssetTag {
 
 export interface AssetInput {
   id: string;
+  user_id: string;
   asset_id: string;
   document_id: string | null;
   source_material_id: string | null;
@@ -91,6 +116,7 @@ export interface AssetInput {
 
 export interface Extraction {
   id: string;
+  user_id: string;
   source_material_id: string | null;
   document_id: string | null;
   summary: string | null;
@@ -103,6 +129,14 @@ export interface Extraction {
 // ============================================
 // INSERT TYPES (omit auto-generated fields)
 // ============================================
+
+export type UserSettingsInsert = Omit<UserSettings, 'id' | 'created_at' | 'updated_at'> & {
+  id?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type UserSettingsUpdate = Partial<Omit<UserSettings, 'id' | 'user_id' | 'created_at' | 'updated_at'>>;
 
 export type TrendSourceInsert = Omit<TrendSource, 'id' | 'created_at' | 'updated_at'> & {
   id?: string;
@@ -144,6 +178,7 @@ export type ExtractionInsert = Omit<Extraction, 'id' | 'created_at'> & {
 
 export interface Template {
   id: string;
+  user_id: string | null; // NULL = system default
   template_key: string;
   name: string;
   description: string | null;

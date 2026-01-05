@@ -7,6 +7,7 @@
 
 import { IncomingMessage, ServerResponse } from 'http';
 import { getDb } from '../services/db';
+import { requireUserId } from '../middleware/auth';
 import { SourceMaterial, SourceMaterialInsert, SourceMaterialType } from '../types';
 
 interface CreateSourceMaterialRequest {
@@ -64,6 +65,7 @@ function validateCreateRequest(body: unknown): body is CreateSourceMaterialReque
 
 async function handleCreate(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
+    const userId = requireUserId(req);
     const body = await parseBody(req);
 
     if (!validateCreateRequest(body)) {
@@ -75,6 +77,7 @@ async function handleCreate(req: IncomingMessage, res: ServerResponse): Promise<
     }
 
     const insert: SourceMaterialInsert = {
+      user_id: userId,
       type: body.type,
       title: body.title ?? null,
       content: body.content.trim(),
@@ -104,6 +107,7 @@ async function handleCreate(req: IncomingMessage, res: ServerResponse): Promise<
 
 async function handleList(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
+    const userId = requireUserId(req);
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
     const typeFilter = url.searchParams.get('type') as SourceMaterialType | null;
     const limit = parseInt(url.searchParams.get('limit') ?? '50', 10);
@@ -112,6 +116,7 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
     let query = db
       .from('source_materials')
       .select('*')
+      .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(limit);
 

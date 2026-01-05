@@ -8,6 +8,7 @@
 
 import { IncomingMessage, ServerResponse } from 'http';
 import { getDb } from '../services/db';
+import { requireUserId } from '../middleware/auth';
 import { getClaudeClient } from '../services/claude';
 import { getTemplatePrompt, isValidTemplateKey } from '../services/templates';
 import { Asset, AssetInsert, AssetInputInsert, Extraction } from '../types';
@@ -145,6 +146,7 @@ export async function handleAdhoc(
   res: ServerResponse
 ): Promise<void> {
   try {
+    const userId = requireUserId(req);
     const body = await parseBody(req);
 
     if (!validateRequest(body)) {
@@ -167,7 +169,7 @@ export async function handleAdhoc(
 
     const db = getDb();
 
-    // Fetch extractions with source info
+    // Fetch extractions with source info (filtered by user)
     const { data: extractions, error: fetchError } = await db
       .from('extractions')
       .select(`
@@ -180,6 +182,7 @@ export async function handleAdhoc(
         source_materials (title, type),
         documents (title)
       `)
+      .eq('user_id', userId)
       .in('id', body.extraction_ids);
 
     if (fetchError) {
@@ -237,6 +240,7 @@ export async function handleAdhoc(
         }
 
         const insert: AssetInsert = {
+          user_id: userId,
           type: assetType,
           title: generated.title,
           content: generated.content,
@@ -259,6 +263,7 @@ export async function handleAdhoc(
         // Create provenance links
         if (sourceIds.length > 0) {
           const smInputs: AssetInputInsert[] = sourceIds.map((smId) => ({
+            user_id: userId,
             asset_id: asset.id,
             source_material_id: smId,
             document_id: null,
@@ -269,6 +274,7 @@ export async function handleAdhoc(
 
         if (documentIds.length > 0) {
           const docInputs: AssetInputInsert[] = documentIds.map((docId) => ({
+            user_id: userId,
             asset_id: asset.id,
             source_material_id: null,
             document_id: docId,

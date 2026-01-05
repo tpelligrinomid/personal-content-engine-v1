@@ -8,6 +8,7 @@
 import { IncomingMessage, ServerResponse } from 'http';
 import { createHash } from 'crypto';
 import { getDb } from '../services/db';
+import { requireUserId } from '../middleware/auth';
 import { crawlBlog, scrapePage, ScrapedPage } from '../services/firecrawl';
 import { TrendSource, Document, DocumentInsert } from '../types';
 
@@ -45,15 +46,17 @@ function hashContent(content: string): string {
 
 async function saveDocument(
   db: ReturnType<typeof getDb>,
+  userId: string,
   page: ScrapedPage,
   sourceId: string | null
 ): Promise<Document | null> {
-  // Check for duplicate by URL or content hash
+  // Check for duplicate by URL or content hash (for this user)
   const dedupeHash = hashContent(page.content);
 
   const { data: existing } = await db
     .from('documents')
     .select('id')
+    .eq('user_id', userId)
     .or(`url.eq.${page.url},dedupe_hash.eq.${dedupeHash}`)
     .limit(1);
 
@@ -63,6 +66,7 @@ async function saveDocument(
   }
 
   const insert: DocumentInsert = {
+    user_id: userId,
     trend_source_id: sourceId,
     url: page.url,
     canonical_url: null,
@@ -90,16 +94,18 @@ async function saveDocument(
 
 async function handleCrawlSources(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
+    const userId = requireUserId(req);
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
     const tier = url.searchParams.get('tier');
     const limit = parseInt(url.searchParams.get('limit') ?? '10', 10);
 
     const db = getDb();
 
-    // Get active sources
+    // Get active sources for this user
     let query = db
       .from('trend_sources')
       .select('*')
+      .eq('user_id', userId)
       .eq('status', 'active')
       .order('tier', { ascending: true });
 
@@ -142,7 +148,7 @@ async function handleCrawlSources(req: IncomingMessage, res: ServerResponse): Pr
         const pages = await crawlBlog(crawlUrl, { limit });
 
         for (const page of pages) {
-          const doc = await saveDocument(db, page, source.id);
+          const doc = await saveDocument(db, userId, page, source.id);
           if (doc) {
             allDocuments.push(doc);
           }
@@ -176,6 +182,7 @@ async function handleCrawlSources(req: IncomingMessage, res: ServerResponse): Pr
 
 async function handleCrawlUrl(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
+    const userId = requireUserId(req);
     const body = (await parseBody(req)) as Record<string, unknown>;
 
     if (!body.url || typeof body.url !== 'string') {
@@ -188,7 +195,7 @@ async function handleCrawlUrl(req: IncomingMessage, res: ServerResponse): Promis
     console.log(`Scraping single URL: ${body.url}`);
     const page = await scrapePage(body.url);
 
-    const doc = await saveDocument(db, page, null);
+    const doc = await saveDocument(db, userId, page, null);
 
     if (!doc) {
       sendJson(res, 200, {

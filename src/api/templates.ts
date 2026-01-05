@@ -9,6 +9,7 @@
 
 import { IncomingMessage, ServerResponse } from 'http';
 import { getDb } from '../services/db';
+import { requireUserId } from '../middleware/auth';
 import {
   getAvailableTemplates,
   getTemplateInfo,
@@ -85,6 +86,7 @@ async function handleUpsert(
   }
 
   try {
+    const userId = requireUserId(req);
     const body = (await parseBody(req)) as Record<string, unknown>;
 
     if (!body.prompt || typeof body.prompt !== 'string') {
@@ -94,14 +96,16 @@ async function handleUpsert(
 
     const db = getDb();
 
-    // Check if override exists
+    // Check if override exists for this user
     const { data: existing } = await db
       .from('templates')
       .select('id')
+      .eq('user_id', userId)
       .eq('template_key', key)
       .single();
 
     const insert: TemplateInsert = {
+      user_id: userId,
       template_key: key,
       name: (body.name as string) || key,
       description: (body.description as string) || null,
@@ -121,6 +125,7 @@ async function handleUpsert(
           prompt: insert.prompt,
           active: insert.active,
         })
+        .eq('user_id', userId)
         .eq('template_key', key)
         .select()
         .single();
@@ -172,9 +177,14 @@ async function handleDelete(
   }
 
   try {
+    const userId = requireUserId(req);
     const db = getDb();
 
-    const { error } = await db.from('templates').delete().eq('template_key', key);
+    const { error } = await db
+      .from('templates')
+      .delete()
+      .eq('user_id', userId)
+      .eq('template_key', key);
 
     if (error) {
       sendJson(res, 500, { success: false, error: error.message });

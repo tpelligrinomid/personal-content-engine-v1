@@ -13,6 +13,7 @@
 
 import { IncomingMessage, ServerResponse } from 'http';
 import { getDb } from '../services/db';
+import { requireUserId } from '../middleware/auth';
 import {
   generateNewsletter,
   generateBlogPost,
@@ -58,10 +59,10 @@ let lastGenerationResult: {
   errors: string[];
 } | null = null;
 
-async function runGeneration(daysBack: number): Promise<void> {
+async function runGeneration(userId: string, daysBack: number): Promise<void> {
   const db = getDb();
 
-  // Get extractions from the last N days with source material info
+  // Get extractions from the last N days with source material info (for this user)
   const since = new Date();
   since.setDate(since.getDate() - daysBack);
 
@@ -72,6 +73,7 @@ async function runGeneration(daysBack: number): Promise<void> {
       source_materials (title, type),
       documents (title)
     `)
+    .eq('user_id', userId)
     .gte('created_at', since.toISOString())
     .order('created_at', { ascending: false });
 
@@ -108,7 +110,7 @@ async function runGeneration(daysBack: number): Promise<void> {
   try {
     console.log('[Generate] Creating newsletter...');
     const newsletter = await generateNewsletter(extractionsWithSource);
-    const asset = await saveAsset(db, 'newsletter', newsletter.title, newsletter.content, sourceIds, documentIds);
+    const asset = await saveAsset(db, userId, 'newsletter', newsletter.title, newsletter.content, sourceIds, documentIds);
     assets.push(asset);
   } catch (err) {
     errors.push(`Newsletter: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -118,7 +120,7 @@ async function runGeneration(daysBack: number): Promise<void> {
   try {
     console.log('[Generate] Creating blog post...');
     const blogPost = await generateBlogPost(extractionsWithSource);
-    const asset = await saveAsset(db, 'blog_post', blogPost.title, blogPost.content, sourceIds, documentIds);
+    const asset = await saveAsset(db, userId, 'blog_post', blogPost.title, blogPost.content, sourceIds, documentIds);
     assets.push(asset);
   } catch (err) {
     errors.push(`Blog post: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -129,7 +131,7 @@ async function runGeneration(daysBack: number): Promise<void> {
     console.log('[Generate] Creating LinkedIn posts...');
     const linkedInPosts = await generateLinkedInPosts(extractionsWithSource);
     for (const post of linkedInPosts) {
-      const asset = await saveAsset(db, 'linkedin_post', post.title, post.content, sourceIds, documentIds);
+      const asset = await saveAsset(db, userId, 'linkedin_post', post.title, post.content, sourceIds, documentIds);
       assets.push(asset);
     }
   } catch (err) {
@@ -141,7 +143,7 @@ async function runGeneration(daysBack: number): Promise<void> {
     console.log('[Generate] Creating Twitter posts...');
     const twitterPosts = await generateTwitterPosts(extractionsWithSource);
     for (const post of twitterPosts) {
-      const asset = await saveAsset(db, 'twitter_post', post.title, post.content, sourceIds, documentIds);
+      const asset = await saveAsset(db, userId, 'twitter_post', post.title, post.content, sourceIds, documentIds);
       assets.push(asset);
     }
   } catch (err) {
@@ -159,6 +161,8 @@ async function runGeneration(daysBack: number): Promise<void> {
 
 async function handleWeekly(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
+    const userId = requireUserId(req);
+
     if (isGenerating) {
       sendJson(res, 409, { success: false, error: 'Generation already in progress' });
       return;
@@ -170,7 +174,7 @@ async function handleWeekly(req: IncomingMessage, res: ServerResponse): Promise<
     isGenerating = true;
 
     // Run in background - don't await
-    runGeneration(daysBack)
+    runGeneration(userId, daysBack)
       .catch((err) => {
         console.error('[Generate] Failed:', err);
         lastGenerationResult = {
@@ -213,6 +217,7 @@ async function handleStatus(req: IncomingMessage, res: ServerResponse): Promise<
 
 async function saveAsset(
   db: ReturnType<typeof getDb>,
+  userId: string,
   type: 'newsletter' | 'blog_post' | 'linkedin_post' | 'twitter_post',
   title: string,
   content: string,
@@ -220,6 +225,7 @@ async function saveAsset(
   documentIds: string[]
 ): Promise<Asset> {
   const insert: AssetInsert = {
+    user_id: userId,
     type,
     title,
     content,
@@ -243,6 +249,7 @@ async function saveAsset(
   // Create provenance links for source materials
   if (sourceIds.length > 0) {
     const smInputs: AssetInputInsert[] = sourceIds.map((smId) => ({
+      user_id: userId,
       asset_id: asset.id,
       source_material_id: smId,
       document_id: null,
@@ -255,6 +262,7 @@ async function saveAsset(
   // Create provenance links for documents
   if (documentIds.length > 0) {
     const docInputs: AssetInputInsert[] = documentIds.map((docId) => ({
+      user_id: userId,
       asset_id: asset.id,
       source_material_id: null,
       document_id: docId,

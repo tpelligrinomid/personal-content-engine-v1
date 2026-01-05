@@ -12,6 +12,7 @@
 
 import { IncomingMessage, ServerResponse } from 'http';
 import { getDb } from '../services/db';
+import { requireUserId } from '../middleware/auth';
 import { SourceMaterial, SourceMaterialInsert } from '../types';
 
 // Fireflies API response types
@@ -214,7 +215,8 @@ function formatDuration(minutes: number): string {
 }
 
 async function ingestSingleTranscript(
-  transcript: FirefliesTranscript
+  transcript: FirefliesTranscript,
+  userId: string
 ): Promise<SourceMaterial> {
   const db = getDb();
 
@@ -222,6 +224,7 @@ async function ingestSingleTranscript(
   const { data: existing } = await db
     .from('source_materials')
     .select('*')
+    .eq('user_id', userId)
     .eq('source_url', transcript.transcript_url)
     .single();
 
@@ -249,6 +252,7 @@ async function ingestSingleTranscript(
   const fullContent = metadata.join('\n') + flattenedContent;
 
   const insert: SourceMaterialInsert = {
+    user_id: userId,
     type: 'meeting',
     title: transcript.title,
     content: fullContent,
@@ -270,7 +274,8 @@ async function ingestSingleTranscript(
 }
 
 async function ingestDownloadedTranscript(
-  request: FirefliesDownloadedRequest
+  request: FirefliesDownloadedRequest,
+  userId: string
 ): Promise<SourceMaterial> {
   const db = getDb();
 
@@ -295,6 +300,7 @@ async function ingestDownloadedTranscript(
   const fullContent = metadata.join('\n') + flattenedContent;
 
   const insert: SourceMaterialInsert = {
+    user_id: userId,
     type: 'meeting',
     title: request.title,
     content: fullContent,
@@ -317,6 +323,7 @@ async function ingestDownloadedTranscript(
 
 async function handleIngest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
+    const userId = requireUserId(req);
     const body = await parseBody(req);
 
     // Handle API response format (single or array)
@@ -328,7 +335,7 @@ async function handleIngest(req: IncomingMessage, res: ServerResponse): Promise<
       transcripts = [body.data.transcript];
     } else if (isDownloadedFormat(body)) {
       // Handle downloaded JSON with metadata wrapper
-      const result = await ingestDownloadedTranscript(body);
+      const result = await ingestDownloadedTranscript(body, userId);
       sendJson(res, 201, {
         success: true,
         data: {
@@ -355,7 +362,7 @@ async function handleIngest(req: IncomingMessage, res: ServerResponse): Promise<
         title,
         date: date ?? undefined,
         sentences: body,
-      });
+      }, userId);
       sendJson(res, 201, {
         success: true,
         data: {
@@ -377,7 +384,7 @@ async function handleIngest(req: IncomingMessage, res: ServerResponse): Promise<
 
     for (const transcript of transcripts) {
       try {
-        const result = await ingestSingleTranscript(transcript);
+        const result = await ingestSingleTranscript(transcript, userId);
         results.push(result);
       } catch (err) {
         errors.push(

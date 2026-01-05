@@ -6,7 +6,7 @@
 
 import { IncomingMessage, ServerResponse } from 'http';
 import { getDb } from '../services/db';
-import { getSchedulerStatus } from '../services/scheduler';
+import { requireUserId } from '../middleware/auth';
 
 interface ApiResponse<T = unknown> {
   success: boolean;
@@ -57,15 +57,13 @@ interface DashboardStats {
     assets_this_week: number;
     documents_this_week: number;
   };
-  scheduler: {
-    isRunning: boolean;
-    schedule: string;
-    lastRunAt: string | null;
-    lastRunResult: {
-      crawl: { crawled: number; documents: number; errors: string[] };
-      extraction: { extracted: number; errors: string[] };
-    } | null;
-  };
+  settings: {
+    crawl_schedule: string;
+    generation_schedule: string;
+    content_formats: string[];
+    last_crawl_at: string | null;
+    last_generation_at: string | null;
+  } | null;
 }
 
 export async function handleStats(
@@ -78,10 +76,11 @@ export async function handleStats(
   }
 
   try {
+    const userId = requireUserId(req);
     const db = getDb();
     const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-    // Run all queries in parallel
+    // Run all queries in parallel (all filtered by user_id)
     const [
       sourceMaterialsCount,
       documentsCount,
@@ -94,28 +93,32 @@ export async function handleStats(
       extractionsThisWeek,
       assetsThisWeek,
       documentsThisWeek,
+      userSettings,
     ] = await Promise.all([
       // Counts
-      db.from('source_materials').select('id', { count: 'exact', head: true }),
-      db.from('documents').select('id', { count: 'exact', head: true }),
-      db.from('extractions').select('id', { count: 'exact', head: true }),
-      db.from('assets').select('id, status, type'),
-      db.from('trend_sources').select('id', { count: 'exact', head: true }),
+      db.from('source_materials').select('id', { count: 'exact', head: true }).eq('user_id', userId),
+      db.from('documents').select('id', { count: 'exact', head: true }).eq('user_id', userId),
+      db.from('extractions').select('id', { count: 'exact', head: true }).eq('user_id', userId),
+      db.from('assets').select('id, status, type').eq('user_id', userId),
+      db.from('trend_sources').select('id', { count: 'exact', head: true }).eq('user_id', userId),
 
       // Recent items
       db
         .from('assets')
         .select('id, type, title, status, created_at')
+        .eq('user_id', userId)
         .order('created_at', { ascending: false })
         .limit(5),
       db
         .from('source_materials')
         .select('id, title, type, created_at')
+        .eq('user_id', userId)
         .order('created_at', { ascending: false })
         .limit(5),
       db
         .from('documents')
         .select('id, title, url, crawled_at')
+        .eq('user_id', userId)
         .order('crawled_at', { ascending: false })
         .limit(5),
 
@@ -123,15 +126,25 @@ export async function handleStats(
       db
         .from('extractions')
         .select('id', { count: 'exact', head: true })
+        .eq('user_id', userId)
         .gte('extracted_at', oneWeekAgo),
       db
         .from('assets')
         .select('id', { count: 'exact', head: true })
+        .eq('user_id', userId)
         .gte('created_at', oneWeekAgo),
       db
         .from('documents')
         .select('id', { count: 'exact', head: true })
+        .eq('user_id', userId)
         .gte('crawled_at', oneWeekAgo),
+
+      // User settings
+      db
+        .from('user_settings')
+        .select('crawl_schedule, generation_schedule, content_formats, last_crawl_at, last_generation_at')
+        .eq('user_id', userId)
+        .single(),
     ]);
 
     // Calculate asset breakdowns
@@ -167,7 +180,7 @@ export async function handleStats(
         assets_this_week: assetsThisWeek.count || 0,
         documents_this_week: documentsThisWeek.count || 0,
       },
-      scheduler: getSchedulerStatus(),
+      settings: userSettings.data || null,
     };
 
     sendJson(res, 200, { success: true, data: stats });

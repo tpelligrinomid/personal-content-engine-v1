@@ -7,6 +7,7 @@
 
 import { IncomingMessage, ServerResponse } from 'http';
 import { getDb } from '../services/db';
+import { requireUserId } from '../middleware/auth';
 import { extractFromContent, EXTRACTION_MODEL } from '../services/claude';
 import { Extraction, ExtractionInsert, SourceMaterial } from '../types';
 
@@ -58,6 +59,7 @@ function validateCreateRequest(body: unknown): body is CreateExtractionRequest {
 
 async function handleCreate(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
+    const userId = requireUserId(req);
     const body = await parseBody(req);
 
     if (!validateCreateRequest(body)) {
@@ -77,6 +79,7 @@ async function handleCreate(req: IncomingMessage, res: ServerResponse): Promise<
         .from('source_materials')
         .select('*')
         .eq('id', body.source_material_id)
+        .eq('user_id', userId)
         .single();
 
       if (error || !sourceMaterial) {
@@ -91,6 +94,7 @@ async function handleCreate(req: IncomingMessage, res: ServerResponse): Promise<
         .from('documents')
         .select('*')
         .eq('id', body.document_id)
+        .eq('user_id', userId)
         .single();
 
       if (error || !document) {
@@ -111,7 +115,7 @@ async function handleCreate(req: IncomingMessage, res: ServerResponse): Promise<
     }
 
     // Check for existing extraction
-    let existingQuery = db.from('extractions').select('*');
+    let existingQuery = db.from('extractions').select('*').eq('user_id', userId);
     if (body.source_material_id) {
       existingQuery = existingQuery.eq('source_material_id', body.source_material_id);
     } else {
@@ -132,6 +136,7 @@ async function handleCreate(req: IncomingMessage, res: ServerResponse): Promise<
     const extractionResult = await extractFromContent(content, contentType);
 
     const insert: ExtractionInsert = {
+      user_id: userId,
       source_material_id: body.source_material_id ?? null,
       document_id: body.document_id ?? null,
       summary: extractionResult.summary,
@@ -164,6 +169,7 @@ async function handleCreate(req: IncomingMessage, res: ServerResponse): Promise<
 
 async function handleBatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
+    const userId = requireUserId(req);
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
     const limit = parseInt(url.searchParams.get('limit') ?? '0', 10);
     const source = url.searchParams.get('source') || 'all'; // 'source_materials', 'documents', or 'all'
@@ -179,11 +185,13 @@ async function handleBatch(req: IncomingMessage, res: ServerResponse): Promise<v
       const { data: sourceMaterials } = await db
         .from('source_materials')
         .select('id, type, content, title')
+        .eq('user_id', userId)
         .order('created_at', { ascending: true });
 
       const { data: existingSM } = await db
         .from('extractions')
         .select('source_material_id')
+        .eq('user_id', userId)
         .not('source_material_id', 'is', null);
 
       const existingSmIds = new Set(
@@ -207,6 +215,7 @@ async function handleBatch(req: IncomingMessage, res: ServerResponse): Promise<v
           const extractionResult = await extractFromContent(sm.content, sm.type);
 
           const insert: ExtractionInsert = {
+            user_id: userId,
             source_material_id: sm.id,
             document_id: null,
             summary: extractionResult.summary,
@@ -237,6 +246,7 @@ async function handleBatch(req: IncomingMessage, res: ServerResponse): Promise<v
       const { data: documents } = await db
         .from('documents')
         .select('id, title, raw_text')
+        .eq('user_id', userId)
         .eq('status', 'parsed')
         .not('raw_text', 'is', null)
         .order('created_at', { ascending: true });
@@ -244,6 +254,7 @@ async function handleBatch(req: IncomingMessage, res: ServerResponse): Promise<v
       const { data: existingDocs } = await db
         .from('extractions')
         .select('document_id')
+        .eq('user_id', userId)
         .not('document_id', 'is', null);
 
       const existingDocIds = new Set(
@@ -270,6 +281,7 @@ async function handleBatch(req: IncomingMessage, res: ServerResponse): Promise<v
           const extractionResult = await extractFromContent(doc.raw_text, 'document');
 
           const insert: ExtractionInsert = {
+            user_id: userId,
             source_material_id: null,
             document_id: doc.id,
             summary: extractionResult.summary,
@@ -316,6 +328,7 @@ async function handleBatch(req: IncomingMessage, res: ServerResponse): Promise<v
 
 async function handleList(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
+    const userId = requireUserId(req);
     const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
     const sourceMaterialId = url.searchParams.get('source_material_id');
     const documentId = url.searchParams.get('document_id');
@@ -325,6 +338,7 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
     let query = db
       .from('extractions')
       .select('*')
+      .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(limit);
 

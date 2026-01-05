@@ -9,6 +9,7 @@
 
 import { IncomingMessage, ServerResponse } from 'http';
 import { getDb } from '../services/db';
+import { requireUserId } from '../middleware/auth';
 import { Asset } from '../types';
 
 interface ApiResponse<T = unknown> {
@@ -51,6 +52,7 @@ function getQueryParams(req: IncomingMessage): URLSearchParams {
 
 async function handleList(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
+    const userId = requireUserId(req);
     const params = getQueryParams(req);
     const type = params.get('type');
     const status = params.get('status');
@@ -61,6 +63,7 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
     let query = db
       .from('assets')
       .select('id, type, title, status, publish_date, published_url, created_at, updated_at', { count: 'exact' })
+      .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -102,9 +105,10 @@ async function handleGet(
   id: string
 ): Promise<void> {
   try {
+    const userId = requireUserId(req);
     const db = getDb();
 
-    // Get asset with inputs
+    // Get asset with inputs (filter by user_id for security)
     const { data: asset, error } = await db
       .from('assets')
       .select(`
@@ -119,6 +123,7 @@ async function handleGet(
         )
       `)
       .eq('id', id)
+      .eq('user_id', userId)
       .single();
 
     if (error) {
@@ -178,12 +183,14 @@ async function handleUpdate(
       }
     }
 
+    const userId = requireUserId(req);
     const db = getDb();
 
     const { data, error } = await db
       .from('assets')
       .update(updates)
       .eq('id', id)
+      .eq('user_id', userId)
       .select()
       .single();
 
@@ -212,13 +219,14 @@ async function handleDelete(
   id: string
 ): Promise<void> {
   try {
+    const userId = requireUserId(req);
     const db = getDb();
 
     // Delete asset inputs first (foreign key constraint)
-    await db.from('asset_inputs').delete().eq('asset_id', id);
+    await db.from('asset_inputs').delete().eq('asset_id', id).eq('user_id', userId);
 
     // Delete the asset
-    const { error } = await db.from('assets').delete().eq('id', id);
+    const { error } = await db.from('assets').delete().eq('id', id).eq('user_id', userId);
 
     if (error) {
       sendJson(res, 500, { success: false, error: error.message });

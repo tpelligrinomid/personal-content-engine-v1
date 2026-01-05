@@ -14,7 +14,9 @@ interface GeneratedContent {
   content: string;
 }
 
-interface ExtractionWithSource extends Extraction {
+// Internal type for generation - doesn't need user_id since we're processing
+interface ExtractionWithSource extends Omit<Extraction, 'user_id'> {
+  user_id?: string; // Optional for internal processing
   source_title?: string;
   source_type?: string;
 }

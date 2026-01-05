@@ -8,6 +8,7 @@
 
 import { IncomingMessage, ServerResponse } from 'http';
 import { getDb } from '../services/db';
+import { requireUserId } from '../middleware/auth';
 import { SourceMaterial, SourceMaterialInsert } from '../types';
 
 interface ManualNoteRequest {
@@ -66,6 +67,7 @@ function generateTitle(content: string): string {
 
 async function handleIngest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
+    const userId = requireUserId(req);
     const body = await parseBody(req);
 
     if (!validateRequest(body)) {
@@ -82,6 +84,7 @@ async function handleIngest(req: IncomingMessage, res: ServerResponse): Promise<
     const occurredAt = body.occurred_at || new Date().toISOString();
 
     const insert: SourceMaterialInsert = {
+      user_id: userId,
       type: 'manual_note',
       title,
       content: body.content,
