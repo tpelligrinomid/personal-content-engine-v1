@@ -511,6 +511,12 @@ Trend sources are blogs/sites that get crawled for articles.
 #### GET /api/trend-sources
 List all trend sources.
 
+**Query Parameters:**
+| Param | Type | Description |
+|-------|------|-------------|
+| tier | number | Filter by tier (1, 2, or 3) |
+| status | string | Filter by status: `active`, `paused`, `dead` |
+
 **Response:**
 ```json
 {
@@ -519,12 +525,67 @@ List all trend sources.
     {
       "id": "uuid",
       "name": "TechCrunch",
-      "url": "https://techcrunch.com",
+      "domain": "techcrunch.com",
+      "feed_url": "https://techcrunch.com/feed",
+      "sitemap_url": null,
+      "crawl_method": "rss",
       "tier": 1,
-      "active": true,
-      "last_crawled_at": "2026-01-04T10:00:00Z"
+      "status": "active",
+      "trust_score": 85,
+      "notes": "Great for startup news",
+      "last_crawled_at": "2026-01-04T10:00:00Z",
+      "created_at": "2026-01-01T00:00:00Z"
     }
   ]
+}
+```
+
+#### POST /api/trend-sources
+Create a new trend source.
+
+**Request Body:**
+```json
+{
+  "name": "TechCrunch",
+  "domain": "techcrunch.com",
+  "feed_url": "https://techcrunch.com/feed",
+  "sitemap_url": null,
+  "crawl_method": "rss",
+  "tier": 1,
+  "status": "active",
+  "trust_score": 85,
+  "notes": "Great for startup news"
+}
+```
+
+**Required:** `name`
+
+**crawl_method values:** `rss`, `sitemap`, `html`
+
+**status values:** `active`, `paused`, `dead`
+
+**tier values:** `1` (high priority), `2` (medium), `3` (low)
+
+#### PATCH /api/trend-sources/:id
+Update a trend source.
+
+**Request Body:** (all fields optional)
+```json
+{
+  "name": "Updated Name",
+  "status": "paused",
+  "tier": 2
+}
+```
+
+#### DELETE /api/trend-sources/:id
+Delete a trend source.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": { "deleted": "uuid" }
 }
 ```
 
