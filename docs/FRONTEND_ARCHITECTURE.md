@@ -1,5 +1,17 @@
 # Frontend Architecture for Personal Content Engine
 
+## Authentication
+
+All API requests (except `/health` and `/`) require an API key header:
+
+```
+Authorization: Bearer <API_KEY>
+```
+
+The frontend should store the API key securely and include it in all fetch requests.
+
+---
+
 ## Recommended Pages
 
 ```

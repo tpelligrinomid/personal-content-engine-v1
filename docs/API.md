@@ -5,6 +5,33 @@
 https://personal-content-engine-v1.onrender.com
 ```
 
+## Authentication
+
+All API endpoints (except `/health` and `/`) require authentication via API key.
+
+**Header Format:**
+```
+Authorization: Bearer <API_KEY>
+```
+
+**Example:**
+```bash
+curl -H "Authorization: Bearer your-api-key-here" \
+  https://personal-content-engine-v1.onrender.com/api/stats
+```
+
+**Unauthorized Response (401):**
+```json
+{
+  "success": false,
+  "error": "Missing Authorization header"
+}
+```
+
+**Note:** If no `API_KEY` environment variable is set on the server, authentication is disabled (development mode).
+
+---
+
 ## Overview
 
 The Personal Content Engine is a backend system that:
@@ -652,6 +679,7 @@ All endpoints return errors in this format:
 
 Common HTTP status codes:
 - `400` - Bad request (invalid parameters)
+- `401` - Unauthorized (missing or invalid API key)
 - `404` - Resource not found
 - `405` - Method not allowed
 - `500` - Internal server error

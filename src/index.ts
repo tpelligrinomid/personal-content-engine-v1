@@ -10,6 +10,7 @@
 import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { handleSourceMaterials, handleExtractions, handleExtractionsBatch, handleFireflies, handleVoiceNotes, handleTrends, handleManualNotes, handleGenerate, handleTrendSources, handleCrawl, handleDigestRoute, handleScheduler, handleTemplates, handleAdhoc, handleAssets, handleDocuments, handleStats } from './api';
 import { startScheduler } from './services/scheduler';
+import { validateApiKey, sendUnauthorized, isPublicPath } from './middleware/auth';
 
 const PORT = process.env.PORT || 3000;
 
@@ -21,11 +22,20 @@ function getPathname(req: IncomingMessage): string {
 async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const pathname = getPathname(req);
 
-  // Health check
+  // Health check (no auth required)
   if (pathname === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok' }));
     return;
+  }
+
+  // Authenticate API requests
+  if (!isPublicPath(pathname)) {
+    const auth = validateApiKey(req);
+    if (!auth.authorized) {
+      sendUnauthorized(res, auth.error || 'Unauthorized');
+      return;
+    }
   }
 
   // API routes
