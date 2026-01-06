@@ -8,7 +8,7 @@ import { getClaudeClient } from './claude';
 import { getProfileContextForUser } from './profile';
 import { Extraction } from '../types';
 
-export const GENERATION_MODEL = 'claude-sonnet-4-20250514';
+export const GENERATION_MODEL = 'claude-opus-4-5-20250514';
 
 interface GeneratedContent {
   title: string;
