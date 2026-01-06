@@ -10,7 +10,8 @@
 import { IncomingMessage, ServerResponse } from 'http';
 import { getDb } from '../services/db';
 import { requireUserId } from '../middleware/auth';
-import { SourceMaterial, SourceMaterialInsert } from '../types';
+import { extractFromContent, EXTRACTION_MODEL } from '../services/claude';
+import { SourceMaterial, SourceMaterialInsert, ExtractionInsert } from '../types';
 
 interface FirefliesSentence {
   sentence: string;
@@ -188,11 +189,47 @@ export async function handleMeetings(
       throw new Error(`Database error: ${error.message}`);
     }
 
+    const sourceMaterial = data as SourceMaterial;
     console.log(`[Meeting] Ingested: ${body.title}`);
+
+    // Auto-extract from the content
+    let extraction = null;
+    try {
+      console.log(`[Meeting] Auto-extracting: ${sourceMaterial.title}`);
+      const extractionResult = await extractFromContent(contentWithMetadata, 'meeting');
+
+      const extractionInsert: ExtractionInsert = {
+        user_id: userId,
+        source_material_id: sourceMaterial.id,
+        document_id: null,
+        summary: extractionResult.summary,
+        key_points: extractionResult.key_points,
+        topics: extractionResult.topics,
+        model: EXTRACTION_MODEL,
+      };
+
+      const { data: extractionData, error: extractionError } = await db
+        .from('extractions')
+        .insert(extractionInsert)
+        .select()
+        .single();
+
+      if (extractionError) {
+        console.error('[Meeting] Extraction save failed:', extractionError);
+      } else {
+        extraction = extractionData;
+        console.log(`[Meeting] Extraction created: ${extraction.id}`);
+      }
+    } catch (extractErr) {
+      console.error('[Meeting] Auto-extraction failed:', extractErr);
+    }
 
     sendJson(res, 201, {
       success: true,
-      data: data as SourceMaterial,
+      data: {
+        source_material: sourceMaterial,
+        extraction,
+      },
     });
   } catch (err) {
     console.error('Error ingesting meeting:', err);
