@@ -10,6 +10,7 @@ import { createHash } from 'crypto';
 import { getDb } from './db';
 import { crawlBlog, scrapePage } from './firecrawl';
 import { isRedditUrl, fetchFromRedditUrl } from './reddit';
+import { isTwitterUrl, fetchFromTwitterSource, formatTweetAsContent } from './twitter';
 import { extractFromContent, EXTRACTION_MODEL } from './claude';
 import { TrendSource, DocumentInsert, ExtractionInsert, UserSettings } from '../types';
 
@@ -127,7 +128,21 @@ async function crawlSourcesForUser(userId: string): Promise<{ crawled: number; d
         publishedAt: string | null;
       }>;
 
-      if (isRedditUrl(crawlUrl)) {
+      if (isTwitterUrl(crawlUrl)) {
+        // Use Twitter/Apify crawler
+        console.log(`[Scheduler] Detected Twitter source: ${crawlUrl}`);
+        const tweets = await fetchFromTwitterSource(crawlUrl, {
+          maxTweets: ARTICLES_PER_SOURCE,
+          minLikes: 5, // Only get tweets with at least 5 likes
+        });
+        pages = tweets.map((tweet) => ({
+          url: tweet.url,
+          title: `Tweet by @${tweet.authorHandle}`,
+          content: formatTweetAsContent(tweet),
+          author: tweet.author,
+          publishedAt: tweet.publishedAt,
+        }));
+      } else if (isRedditUrl(crawlUrl)) {
         // Use Reddit crawler
         console.log(`[Scheduler] Detected Reddit source: ${crawlUrl}`);
         const redditPosts = await fetchFromRedditUrl(crawlUrl, {

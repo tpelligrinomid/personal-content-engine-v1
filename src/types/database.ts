@@ -7,7 +7,7 @@
 // ============================================
 
 export type TrendSourceStatus = 'active' | 'paused' | 'blocked';
-export type CrawlMethod = 'rss' | 'sitemap' | 'html' | 'api' | 'manual';
+export type CrawlMethod = 'rss' | 'sitemap' | 'html' | 'api' | 'manual' | 'reddit' | 'twitter';
 export type SourceMaterialType = 'trend' | 'meeting' | 'voice_note' | 'manual_note' | 'podcast';
 export type DocumentStatus = 'fetched' | 'parsed' | 'failed' | 'discarded';
 export type AssetType = 'newsletter' | 'blog_post' | 'linkedin_post' | 'twitter_post' | 'video_script' | 'podcast_segment';
