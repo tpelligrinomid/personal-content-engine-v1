@@ -65,7 +65,9 @@ async function handleGet(
     return;
   }
 
-  const template = await getTemplateInfo(key);
+  // Get userId to check for user-specific overrides
+  const userId = requireUserId(req);
+  const template = await getTemplateInfo(key, userId);
 
   if (!template) {
     sendJson(res, 404, { success: false, error: 'Template not found' });
