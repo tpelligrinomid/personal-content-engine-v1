@@ -145,6 +145,8 @@ function mapFormatToAssetType(format: string): Asset['type'] | null {
     twitter_thread: 'twitter_post',
     blog_post: 'blog_post',
     newsletter: 'newsletter',
+    video_script: 'video_script',
+    podcast_segment: 'podcast_segment',
   };
 
   return mapping[format] || null;
