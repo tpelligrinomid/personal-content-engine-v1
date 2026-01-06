@@ -8,7 +8,7 @@
  */
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
-import { handleSourceMaterials, handleExtractions, handleExtractionsBatch, handleFireflies, handleVoiceNotes, handleTrends, handleManualNotes, handleGenerate, handleTrendSources, handleCrawl, handleDigestRoute, handleScheduler, handleTemplates, handleAdhoc, handleAssets, handleDocuments, handleStats, handleSettings, handleUsers, handleAllowedEmails, handlePodcasts, handleAdminTemplates } from './api';
+import { handleSourceMaterials, handleExtractions, handleExtractionsBatch, handleFireflies, handleVoiceNotes, handleTrends, handleManualNotes, handleGenerate, handleTrendSources, handleCrawl, handleDigestRoute, handleScheduler, handleTemplates, handleAdhoc, handleAssets, handleDocuments, handleStats, handleSettings, handleUsers, handleAllowedEmails, handlePodcasts, handleAdminTemplates, handleMeetings } from './api';
 import { startScheduler } from './services/scheduler';
 import { validateAuth, sendUnauthorized, isPublicPath, setRequestUserId, setRequestUserRole } from './middleware/auth';
 import { getDb } from './services/db';
@@ -124,6 +124,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   if (pathname === '/api/ingest/podcast') {
     return handlePodcasts(req, res);
+  }
+
+  if (pathname === '/api/ingest/meeting') {
+    return handleMeetings(req, res);
   }
 
   // Adhoc must come before /api/generate/ to avoid being caught by startsWith
