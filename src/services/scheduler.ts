@@ -222,7 +222,8 @@ interface UserSettingsForCrawl {
   timezone: string | null;
 }
 
-async function crawlSources(): Promise<{ crawled: number; documents: number; errors: string[] }> {
+async function crawlSources(options: { force?: boolean } = {}): Promise<{ crawled: number; documents: number; errors: string[] }> {
+  const { force = false } = options;
   const db = getDb();
   const allErrors: string[] = [];
   let totalCrawled = 0;
@@ -240,13 +241,13 @@ async function crawlSources(): Promise<{ crawled: number; documents: number; err
   }
 
   for (const settings of usersSettings as UserSettingsForCrawl[]) {
-    // Check if this user should be crawled based on their schedule
-    if (!shouldCrawlUser(settings.crawl_schedule, settings.last_crawl_at, settings.timezone)) {
+    // Check if this user should be crawled based on their schedule (skip check if force=true)
+    if (!force && !shouldCrawlUser(settings.crawl_schedule, settings.last_crawl_at, settings.timezone)) {
       console.log(`[Scheduler] Skipping user ${settings.user_id} - not due for crawl (schedule: ${settings.crawl_schedule}, last: ${settings.last_crawl_at})`);
       continue;
     }
 
-    console.log(`[Scheduler] User ${settings.user_id} is due for crawl (schedule: ${settings.crawl_schedule})`);
+    console.log(`[Scheduler] User ${settings.user_id} is due for crawl (schedule: ${settings.crawl_schedule})${force ? ' [FORCED]' : ''}`);
 
     const result = await crawlSourcesForUser(settings.user_id);
     totalCrawled += result.crawled;
@@ -403,7 +404,7 @@ export function startScheduler(): void {
   console.log('[Scheduler] Scheduler started successfully');
 }
 
-// Manual trigger for testing
+// Manual trigger for testing - bypasses schedule check
 export async function triggerManualRun(): Promise<{
   crawl: { crawled: number; documents: number; errors: string[] };
   extraction: { extracted: number; errors: string[] };
@@ -415,7 +416,8 @@ export async function triggerManualRun(): Promise<{
   isRunning = true;
 
   try {
-    const crawl = await crawlSources();
+    // Force=true bypasses the schedule check for manual triggers
+    const crawl = await crawlSources({ force: true });
     const extraction = await runExtractions();
 
     // Track results
