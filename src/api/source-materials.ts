@@ -149,6 +149,38 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
   }
 }
 
+async function handleGet(
+  req: IncomingMessage,
+  res: ServerResponse,
+  id: string
+): Promise<void> {
+  try {
+    const userId = requireUserId(req);
+    const db = getDb();
+
+    const { data, error } = await db
+      .from('source_materials')
+      .select('*')
+      .eq('id', id)
+      .eq('user_id', userId)
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        sendJson(res, 404, { success: false, error: 'Source material not found' });
+        return;
+      }
+      sendJson(res, 500, { success: false, error: error.message });
+      return;
+    }
+
+    sendJson(res, 200, { success: true, data: data as SourceMaterial });
+  } catch (err) {
+    console.error('Error fetching source material:', err);
+    sendJson(res, 500, { success: false, error: 'Internal server error' });
+  }
+}
+
 async function handleArchive(
   req: IncomingMessage,
   res: ServerResponse,
@@ -212,6 +244,11 @@ export async function handleSourceMaterials(
   // GET /api/source-materials - List all
   if (path === '/api/source-materials' && req.method === 'GET') {
     return handleList(req, res);
+  }
+
+  // GET /api/source-materials/:id - Get single
+  if (id && !action && req.method === 'GET') {
+    return handleGet(req, res, id);
   }
 
   // POST /api/source-materials/:id/archive
