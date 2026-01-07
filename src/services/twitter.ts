@@ -5,7 +5,7 @@
  */
 
 const APIFY_API_KEY = process.env.APIFY_API_KEY;
-const APIFY_TWITTER_ACTOR = 'apify/twitter-scraper';
+const APIFY_TWITTER_ACTOR = 'apidojo/twitter-scraper-lite';
 const APIFY_BASE_URL = 'https://api.apify.com/v2';
 
 export interface ScrapedTweet {
