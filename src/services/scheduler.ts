@@ -17,7 +17,7 @@ import { TrendSource, DocumentInsert, ExtractionInsert, UserSettings } from '../
 // Configuration
 // Global schedule - how often the scheduler checks for work (not per-user schedule)
 const SCHEDULER_CHECK_INTERVAL = process.env.SCHEDULER_CHECK_INTERVAL || '0 */1 * * *'; // Check every hour
-const SOURCES_PER_RUN = parseInt(process.env.SOURCES_PER_RUN || '3', 10);
+const SOURCES_PER_RUN = parseInt(process.env.SOURCES_PER_RUN || '8', 10);
 const ARTICLES_PER_SOURCE = parseInt(process.env.ARTICLES_PER_SOURCE || '5', 10);
 const EXTRACTIONS_PER_RUN = parseInt(process.env.EXTRACTIONS_PER_RUN || '10', 10);
 const DELAY_BETWEEN_SOURCES_MS = 5000; // 5 seconds between sources
