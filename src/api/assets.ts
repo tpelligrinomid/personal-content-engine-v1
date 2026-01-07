@@ -222,6 +222,28 @@ async function handleDelete(
     const userId = requireUserId(req);
     const db = getDb();
 
+    // Check if asset exists and get its status
+    const { data: asset, error: fetchError } = await db
+      .from('assets')
+      .select('id, status')
+      .eq('id', id)
+      .eq('user_id', userId)
+      .single();
+
+    if (fetchError || !asset) {
+      sendJson(res, 404, { success: false, error: 'Asset not found' });
+      return;
+    }
+
+    // Prevent deleting published assets
+    if (asset.status === 'published') {
+      sendJson(res, 400, {
+        success: false,
+        error: 'Cannot delete published assets. Archive it first or change status to draft.',
+      });
+      return;
+    }
+
     // Delete asset inputs first (foreign key constraint)
     await db.from('asset_inputs').delete().eq('asset_id', id).eq('user_id', userId);
 
