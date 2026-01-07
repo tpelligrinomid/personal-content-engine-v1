@@ -19,8 +19,10 @@ import { TrendSource, DocumentInsert, ExtractionInsert, UserSettings } from '../
 const SCHEDULER_CHECK_INTERVAL = process.env.SCHEDULER_CHECK_INTERVAL || '0 */1 * * *'; // Check every hour
 const SOURCES_PER_RUN = parseInt(process.env.SOURCES_PER_RUN || '8', 10);
 const ARTICLES_PER_SOURCE = parseInt(process.env.ARTICLES_PER_SOURCE || '5', 10);
+const TWEETS_PER_SOURCE = parseInt(process.env.TWEETS_PER_SOURCE || '50', 10);
 const EXTRACTIONS_PER_RUN = parseInt(process.env.EXTRACTIONS_PER_RUN || '10', 10);
 const DELAY_BETWEEN_SOURCES_MS = 5000; // 5 seconds between sources
+const DOCUMENT_RETENTION_DAYS = parseInt(process.env.DOCUMENT_RETENTION_DAYS || '30', 10);
 
 /**
  * Check if a user should be crawled based on their schedule and last crawl time
@@ -92,17 +94,34 @@ async function crawlSourcesForUser(userId: string): Promise<{ crawled: number; d
   const errors: string[] = [];
   let documentsCreated = 0;
 
-  // Get active Tier 1 sources for this user, prioritize those not recently crawled
-  const { data: sources, error: sourcesError } = await db
+  // Get active Tier 1 sources - prioritize Twitter sources first
+  // First, get Twitter sources (always crawl these)
+  const { data: twitterSources } = await db
     .from('trend_sources')
     .select('*')
     .eq('user_id', userId)
     .eq('status', 'active')
     .eq('tier', 1)
+    .eq('crawl_method', 'twitter')
     .order('updated_at', { ascending: true })
     .limit(SOURCES_PER_RUN);
 
-  if (sourcesError || !sources || sources.length === 0) {
+  // Then fill remaining slots with other sources
+  const remainingSlots = SOURCES_PER_RUN - (twitterSources?.length || 0);
+  const { data: otherSources } = remainingSlots > 0 ? await db
+    .from('trend_sources')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('status', 'active')
+    .eq('tier', 1)
+    .neq('crawl_method', 'twitter')
+    .order('updated_at', { ascending: true })
+    .limit(remainingSlots) : { data: [] };
+
+  // Combine: Twitter first, then others
+  const sources = [...(twitterSources || []), ...(otherSources || [])];
+
+  if (sources.length === 0) {
     return { crawled: 0, documents: 0, errors: [] };
   }
 
@@ -129,11 +148,11 @@ async function crawlSourcesForUser(userId: string): Promise<{ crawled: number; d
       }>;
 
       if (isTwitterUrl(crawlUrl)) {
-        // Use Twitter/Apify crawler
+        // Use Twitter/Apify crawler - fetch more tweets than articles
         console.log(`[Scheduler] Detected Twitter source: ${crawlUrl}`);
         const tweets = await fetchFromTwitterSource(crawlUrl, {
-          maxTweets: ARTICLES_PER_SOURCE,
-          minLikes: 5, // Only get tweets with at least 5 likes
+          maxTweets: TWEETS_PER_SOURCE,
+          minLikes: 3, // Lower threshold for tweets
         });
         pages = tweets.map((tweet) => ({
           url: tweet.url,
@@ -355,6 +374,64 @@ async function runExtractions(): Promise<{ extracted: number; errors: string[] }
   return { extracted: totalExtracted, errors: allErrors };
 }
 
+/**
+ * Clean up old documents and their extractions
+ * Removes documents older than DOCUMENT_RETENTION_DAYS
+ */
+async function cleanupOldDocuments(): Promise<{ deleted: number; errors: string[] }> {
+  const db = getDb();
+  const errors: string[] = [];
+  let deleted = 0;
+
+  const cutoffDate = new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - DOCUMENT_RETENTION_DAYS);
+  const cutoffIso = cutoffDate.toISOString();
+
+  console.log(`[Scheduler] Cleaning up documents older than ${DOCUMENT_RETENTION_DAYS} days (before ${cutoffIso})`);
+
+  try {
+    // First, get IDs of old documents to delete their extractions
+    const { data: oldDocs } = await db
+      .from('documents')
+      .select('id')
+      .lt('created_at', cutoffIso);
+
+    if (oldDocs && oldDocs.length > 0) {
+      const oldDocIds = oldDocs.map((d: { id: string }) => d.id);
+
+      // Delete extractions for these documents
+      const { error: extractionError } = await db
+        .from('extractions')
+        .delete()
+        .in('document_id', oldDocIds);
+
+      if (extractionError) {
+        errors.push(`Failed to delete extractions: ${extractionError.message}`);
+      }
+
+      // Delete the documents
+      const { error: docError } = await db
+        .from('documents')
+        .delete()
+        .lt('created_at', cutoffIso);
+
+      if (docError) {
+        errors.push(`Failed to delete documents: ${docError.message}`);
+      } else {
+        deleted = oldDocIds.length;
+      }
+
+      console.log(`[Scheduler] Cleaned up ${deleted} old documents`);
+    } else {
+      console.log('[Scheduler] No old documents to clean up');
+    }
+  } catch (err) {
+    errors.push(`Cleanup error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+  }
+
+  return { deleted, errors };
+}
+
 async function runScheduledJob(): Promise<void> {
   if (isRunning) {
     console.log('[Scheduler] Job already running, skipping...');
@@ -373,6 +450,12 @@ async function runScheduledJob(): Promise<void> {
     const extractResult = await runExtractions();
     console.log(`[Scheduler] Extraction complete: ${extractResult.extracted} new extractions`);
 
+    // Step 3: Clean up old documents (runs daily)
+    const cleanupResult = await cleanupOldDocuments();
+    if (cleanupResult.deleted > 0) {
+      console.log(`[Scheduler] Cleanup complete: ${cleanupResult.deleted} old documents removed`);
+    }
+
     // Track results
     lastRunAt = new Date().toISOString();
     lastRunResult = { crawl: crawlResult, extraction: extractResult };
@@ -387,8 +470,9 @@ async function runScheduledJob(): Promise<void> {
 
 export function startScheduler(): void {
   console.log(`[Scheduler] Starting with check interval: ${SCHEDULER_CHECK_INTERVAL}`);
-  console.log(`[Scheduler] Config: ${SOURCES_PER_RUN} sources, ${ARTICLES_PER_SOURCE} articles each, ${EXTRACTIONS_PER_RUN} extractions per run`);
-  console.log(`[Scheduler] Note: Per-user schedules are respected (daily, weekly, etc.)`);
+  console.log(`[Scheduler] Config: ${SOURCES_PER_RUN} sources/run, ${ARTICLES_PER_SOURCE} articles/source, ${TWEETS_PER_SOURCE} tweets/source`);
+  console.log(`[Scheduler] Cleanup: Documents older than ${DOCUMENT_RETENTION_DAYS} days will be removed`);
+  console.log(`[Scheduler] Note: Twitter sources are prioritized and crawled first`);
 
   // Validate cron expression
   if (!cron.validate(SCHEDULER_CHECK_INTERVAL)) {
