@@ -21,27 +21,30 @@ export interface ScrapedTweet {
 }
 
 interface ApifyTweetResult {
-  id_str?: string;
+  // apidojo/twitter-scraper-lite format
+  type?: string;
   id?: string;
-  full_text?: string;
-  text?: string;
   url?: string;
-  user?: {
-    name?: string;
-    screen_name?: string;
-  };
-  author?: {
-    name?: string;
-    userName?: string;
-  };
-  created_at?: string;
+  text?: string;
   createdAt?: string;
-  favorite_count?: number;
-  retweet_count?: number;
-  reply_count?: number;
   likeCount?: number;
   retweetCount?: number;
   replyCount?: number;
+  author?: {
+    userName?: string;
+    name?: string;
+  };
+  // Legacy Twitter API format (fallback)
+  id_str?: string;
+  full_text?: string;
+  created_at?: string;
+  favorite_count?: number;
+  retweet_count?: number;
+  reply_count?: number;
+  user?: {
+    screen_name?: string;
+    name?: string;
+  };
 }
 
 interface ApifyRunResponse {
@@ -183,11 +186,6 @@ async function runApifyActor(input: Record<string, unknown>): Promise<ApifyTweet
   const results = (await datasetResponse.json()) as ApifyTweetResult[];
   console.log(`[Twitter] Fetched ${results.length} tweets`);
 
-  // Log first result to debug field structure
-  if (results.length > 0) {
-    console.log(`[Twitter] Sample tweet structure:`, JSON.stringify(results[0], null, 2));
-  }
-
   return results;
 }
 
@@ -274,11 +272,6 @@ export async function fetchFromTwitterSource(
     .filter((t) => t.likes >= minLikes);
 
   console.log(`[Twitter] Returning ${tweets.length} tweets (filtered by ${minLikes}+ likes)`);
-
-  // Log sample normalized tweet
-  if (tweets.length > 0) {
-    console.log(`[Twitter] Sample normalized tweet:`, JSON.stringify(tweets[0], null, 2));
-  }
 
   return tweets;
 }
