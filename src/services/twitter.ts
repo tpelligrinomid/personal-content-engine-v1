@@ -183,6 +183,11 @@ async function runApifyActor(input: Record<string, unknown>): Promise<ApifyTweet
   const results = (await datasetResponse.json()) as ApifyTweetResult[];
   console.log(`[Twitter] Fetched ${results.length} tweets`);
 
+  // Log first result to debug field structure
+  if (results.length > 0) {
+    console.log(`[Twitter] Sample tweet structure:`, JSON.stringify(results[0], null, 2));
+  }
+
   return results;
 }
 
@@ -269,6 +274,11 @@ export async function fetchFromTwitterSource(
     .filter((t) => t.likes >= minLikes);
 
   console.log(`[Twitter] Returning ${tweets.length} tweets (filtered by ${minLikes}+ likes)`);
+
+  // Log sample normalized tweet
+  if (tweets.length > 0) {
+    console.log(`[Twitter] Sample normalized tweet:`, JSON.stringify(tweets[0], null, 2));
+  }
 
   return tweets;
 }
