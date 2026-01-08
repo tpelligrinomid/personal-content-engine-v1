@@ -231,26 +231,31 @@ export async function fetchFromTwitterSource(
 
   let apifyInput: Record<string, unknown>;
 
+  // Use searchTerms with Twitter advanced search syntax
+  // See: https://github.com/igorbrigadir/twitter-advanced-search
+  const baseInput = {
+    maxItems: maxTweets,
+    sort: 'Latest',
+    ...(minLikes > 0 && { minimumFavorites: minLikes }),
+  };
+
   switch (source.type) {
     case 'account':
       apifyInput = {
-        twitterHandles: [source.value],
-        maxTweets,
-        mode: 'user',
+        ...baseInput,
+        searchTerms: [`from:${source.value}`],
       };
       break;
     case 'hashtag':
       apifyInput = {
+        ...baseInput,
         searchTerms: [`#${source.value}`],
-        maxTweets,
-        mode: 'search',
       };
       break;
     case 'search':
       apifyInput = {
+        ...baseInput,
         searchTerms: [source.value],
-        maxTweets,
-        mode: 'search',
       };
       break;
   }
