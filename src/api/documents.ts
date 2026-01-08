@@ -40,6 +40,7 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
     const params = getQueryParams(req);
     const sourceId = params.get('source_id');
     const extracted = params.get('extracted');
+    const includeExtraction = params.get('include_extraction') === 'true';
     const limit = parseInt(params.get('limit') || '50', 10);
     const offset = parseInt(params.get('offset') || '0', 10);
     const includeArchived = params.get('include_archived') === 'true';
@@ -50,7 +51,7 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
     // First get documents
     let query = db
       .from('documents')
-      .select('id, title, url, published_at, fetched_at, trend_source_id, archived_at', { count: 'exact' })
+      .select('id, title, url, published_at, fetched_at, trend_source_id, archived_at, raw_text', { count: 'exact' })
       .eq('user_id', userId)
       .order('fetched_at', { ascending: false })
       .range(offset, offset + limit - 1);
@@ -89,30 +90,57 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
       }
     }
 
-    // Attach trend_sources to documents
-    const docsWithSources = documents?.map((doc: any) => ({
+    // Fetch extractions if requested
+    let extractionsMap: Record<string, any> = {};
+    const docIds = documents?.map((d: any) => d.id) || [];
+
+    if (includeExtraction && docIds.length > 0) {
+      const { data: extractions } = await db
+        .from('extractions')
+        .select('document_id, summary, key_points, topics')
+        .eq('user_id', userId)
+        .in('document_id', docIds);
+
+      if (extractions) {
+        extractionsMap = Object.fromEntries(
+          extractions.map((e: any) => [e.document_id, {
+            summary: e.summary,
+            key_points: e.key_points,
+            topics: e.topics,
+          }])
+        );
+      }
+    }
+
+    // Attach trend_sources and extractions to documents
+    const docsWithRelations = documents?.map((doc: any) => ({
       ...doc,
       trend_sources: trendSourcesMap[doc.trend_source_id] || null,
+      extraction: includeExtraction ? (extractionsMap[doc.id] || null) : undefined,
     })) || [];
 
     // If filtering by extracted status, we need to check extractions
-    let filteredDocs = docsWithSources;
+    let filteredDocs = docsWithRelations;
     if (extracted !== null) {
-      const docIds = documents?.map((d: any) => d.id) || [];
-
       if (docIds.length > 0) {
-        const { data: extractions } = await db
-          .from('extractions')
-          .select('document_id')
-          .eq('user_id', userId)
-          .in('document_id', docIds);
+        // If we already fetched extractions, use that data
+        let extractedIds: Set<string>;
+        if (includeExtraction) {
+          extractedIds = new Set(Object.keys(extractionsMap));
+        } else {
+          const { data: extractions } = await db
+            .from('extractions')
+            .select('document_id')
+            .eq('user_id', userId)
+            .in('document_id', docIds);
 
-        const extractedIds = new Set(extractions?.map((e: any) => e.document_id) || []);
+          extractedIds = new Set(extractions?.map((e: any) => e.document_id) || []);
+        }
 
         if (extracted === 'true') {
-          filteredDocs = documents?.filter((d: any) => extractedIds.has(d.id));
+          filteredDocs = docsWithRelations.filter((d: any) => extractedIds.has(d.id));
         } else if (extracted === 'false') {
-          filteredDocs = documents?.filter((d: any) => !extractedIds.has(d.id));
+          filteredDocs = docsWithRelations.filter((d: any) => !extractedIds.has(d.id));
         }
       }
     }
