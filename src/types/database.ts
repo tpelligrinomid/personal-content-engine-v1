@@ -89,7 +89,10 @@ export interface SourceMaterial {
 
 export interface Tag {
   id: string;
+  user_id: string;
   name: string;
+  color: string;
+  is_favorite: boolean;
   created_at: string;
 }
 
@@ -109,6 +112,7 @@ export interface Asset {
 export interface AssetTag {
   asset_id: string;
   tag_id: string;
+  user_id: string;
 }
 
 export interface AssetInput {

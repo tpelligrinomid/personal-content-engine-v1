@@ -12,6 +12,8 @@ export { handleScheduler } from './scheduler';
 export { handleTemplates } from './templates';
 export { handleAdhoc } from './adhoc';
 export { handleAssets } from './assets';
+export { handleTags } from './tags';
+export { handleAssetTags } from './asset-tags';
 export { handleDocuments } from './documents';
 export { handleStats } from './stats';
 export { handleSettings } from './settings';

@@ -56,10 +56,34 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
     const params = getQueryParams(req);
     const type = params.get('type');
     const status = params.get('status');
+    const tagId = params.get('tag_id');
+    const includeTags = params.get('include_tags') === 'true';
     const limit = parseInt(params.get('limit') || '50', 10);
     const offset = parseInt(params.get('offset') || '0', 10);
 
     const db = getDb();
+
+    // If filtering by tag, we need to get asset IDs first
+    let assetIdsToFilter: string[] | null = null;
+    if (tagId) {
+      const { data: assetTags } = await db
+        .from('asset_tags')
+        .select('asset_id')
+        .eq('tag_id', tagId)
+        .eq('user_id', userId);
+
+      assetIdsToFilter = assetTags?.map((at: { asset_id: string }) => at.asset_id) || [];
+
+      if (assetIdsToFilter.length === 0) {
+        // No assets with this tag
+        sendJson(res, 200, {
+          success: true,
+          data: { assets: [], total: 0, limit, offset },
+        });
+        return;
+      }
+    }
+
     let query = db
       .from('assets')
       .select('id, type, title, status, publish_date, published_url, created_at, updated_at', { count: 'exact' })
@@ -73,6 +97,9 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
     if (status) {
       query = query.eq('status', status);
     }
+    if (assetIdsToFilter) {
+      query = query.in('id', assetIdsToFilter);
+    }
 
     const { data, error, count } = await query;
 
@@ -81,10 +108,40 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
       return;
     }
 
+    // If include_tags requested, fetch tags for each asset
+    let assetsWithTags = data;
+    if (includeTags && data && data.length > 0) {
+      const assetIds = data.map((a: { id: string }) => a.id);
+      const { data: assetTags } = await db
+        .from('asset_tags')
+        .select(`
+          asset_id,
+          tags (id, name, color, is_favorite)
+        `)
+        .eq('user_id', userId)
+        .in('asset_id', assetIds);
+
+      // Group tags by asset_id
+      const tagsMap: Record<string, any[]> = {};
+      assetTags?.forEach((at: any) => {
+        if (at.tags) {
+          if (!tagsMap[at.asset_id]) {
+            tagsMap[at.asset_id] = [];
+          }
+          tagsMap[at.asset_id].push(at.tags);
+        }
+      });
+
+      assetsWithTags = data.map((asset: any) => ({
+        ...asset,
+        tags: tagsMap[asset.id] || [],
+      }));
+    }
+
     sendJson(res, 200, {
       success: true,
       data: {
-        assets: data,
+        assets: assetsWithTags,
         total: count,
         limit,
         offset,
