@@ -99,23 +99,38 @@ Rewrite the content in clean Markdown format with all enrichments applied:
 - Make sure external links go to real, authoritative websites (you can suggest plausible URLs based on your knowledge)
 
 ${assetType === 'blog_post' ? `
-At the very top, add a metadata block:
-\`\`\`
-Meta Description: [60-160 char SEO description]
-SEO Title: [optimized title, 50-60 chars]
-\`\`\`
+At the very top, add YAML frontmatter in this EXACT format:
+---
+title: "[optimized title, 50-60 chars]"
+slug: "[url-friendly-slug-from-title]"
+excerpt: "[1-2 sentence hook/summary, 100-160 chars]"
+meta_description: "[60-160 char SEO description]"
+author_slug: "author"
+featured_image: "[descriptive-image-filename.jpg based on content theme]"
+published: false
+tags:
+  - [relevant-tag-1]
+  - [relevant-tag-2]
+  - [relevant-tag-3]
+---
+
+Generate 2-4 relevant tags based on the content topics. The slug should be lowercase with hyphens.
 ` : ''}
 
 ${assetType === 'newsletter' ? `
-At the very top, add:
-\`\`\`
-Subject Line Options:
-1. [option 1]
-2. [option 2]
-3. [option 3]
+At the very top, add YAML frontmatter in this EXACT format:
+---
+subject_line_1: "[compelling subject line option 1]"
+subject_line_2: "[compelling subject line option 2]"
+subject_line_3: "[compelling subject line option 3]"
+preview_text: "[40-90 chars preview text for email clients]"
+published: false
+tags:
+  - [relevant-tag-1]
+  - [relevant-tag-2]
+---
 
-Preview Text: [40-90 chars preview]
-\`\`\`
+Generate 2-3 relevant tags based on the content topics.
 ` : ''}
 
 Output ONLY the enriched markdown content. Do not include any explanations or commentary.`;
@@ -221,28 +236,57 @@ function countEnrichments(original: string, enriched: string): {
 }
 
 /**
- * Extract type-specific metadata from enriched content
+ * Extract type-specific metadata from YAML frontmatter
  */
 function extractTypeSpecificMetadata(content: string, assetType: AssetType): Record<string, string> {
   const metadata: Record<string, string> = {};
 
-  if (assetType === 'blog_post') {
-    const metaMatch = content.match(/Meta Description:\s*(.+)/i);
-    const seoMatch = content.match(/SEO Title:\s*(.+)/i);
+  // Extract YAML frontmatter
+  const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!frontmatterMatch) return metadata;
 
-    if (metaMatch) metadata.meta_description = metaMatch[1].trim();
-    if (seoMatch) metadata.seo_title = seoMatch[1].trim();
+  const yaml = frontmatterMatch[1];
+
+  // Simple YAML parsing for our known fields
+  const extractValue = (key: string): string | null => {
+    const match = yaml.match(new RegExp(`^${key}:\\s*["']?([^"'\\n]+)["']?`, 'm'));
+    return match ? match[1].trim() : null;
+  };
+
+  // Extract tags
+  const tagsMatch = yaml.match(/tags:\n((?:\s+-\s+.+\n?)+)/);
+  if (tagsMatch) {
+    const tags = tagsMatch[1]
+      .split('\n')
+      .map((line) => line.replace(/^\s+-\s+/, '').trim())
+      .filter(Boolean);
+    metadata.tags = tags.join(', ');
+  }
+
+  if (assetType === 'blog_post') {
+    const title = extractValue('title');
+    const slug = extractValue('slug');
+    const excerpt = extractValue('excerpt');
+    const metaDesc = extractValue('meta_description');
+    const featuredImage = extractValue('featured_image');
+
+    if (title) metadata.title = title;
+    if (slug) metadata.slug = slug;
+    if (excerpt) metadata.excerpt = excerpt;
+    if (metaDesc) metadata.meta_description = metaDesc;
+    if (featuredImage) metadata.featured_image = featuredImage;
   }
 
   if (assetType === 'newsletter') {
-    const subjectMatches = content.match(/Subject Line Options?:[\s\S]*?(?=Preview Text:|```|$)/i);
-    const previewMatch = content.match(/Preview Text:\s*(.+)/i);
+    const subject1 = extractValue('subject_line_1');
+    const subject2 = extractValue('subject_line_2');
+    const subject3 = extractValue('subject_line_3');
+    const previewText = extractValue('preview_text');
 
-    if (subjectMatches) {
-      const lines = subjectMatches[0].split('\n').filter((l) => /^\d+\./.test(l.trim()));
-      metadata.subject_lines = lines.map((l) => l.replace(/^\d+\.\s*/, '').trim()).join(' | ');
-    }
-    if (previewMatch) metadata.preview_text = previewMatch[1].trim();
+    if (subject1) metadata.subject_line_1 = subject1;
+    if (subject2) metadata.subject_line_2 = subject2;
+    if (subject3) metadata.subject_line_3 = subject3;
+    if (previewText) metadata.preview_text = previewText;
   }
 
   return metadata;
