@@ -73,6 +73,8 @@ async function handleGet(req: IncomingMessage, res: ServerResponse): Promise<voi
             voice_tone: null,
             unique_angle: null,
             signature_elements: null,
+            // Publishing
+            publishing_website_url: null,
           },
         });
         return;
@@ -113,6 +115,8 @@ async function handleUpdate(req: IncomingMessage, res: ServerResponse): Promise<
       'voice_tone',
       'unique_angle',
       'signature_elements',
+      // Publishing
+      'publishing_website_url',
     ];
 
     const updates: Record<string, unknown> = {};

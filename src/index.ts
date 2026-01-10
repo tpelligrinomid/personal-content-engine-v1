@@ -8,7 +8,7 @@
  */
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
-import { handleSourceMaterials, handleExtractions, handleExtractionsBatch, handleFireflies, handleVoiceNotes, handleTrends, handleManualNotes, handleGenerate, handleTrendSources, handleCrawl, handleDigestRoute, handleScheduler, handleTemplates, handleAdhoc, handleAssets, handleDocuments, handleStats, handleSettings, handleUsers, handleAllowedEmails, handlePodcasts, handleAdminTemplates, handleMeetings, handleBackfill, handleTags, handleAssetTags } from './api';
+import { handleSourceMaterials, handleExtractions, handleExtractionsBatch, handleFireflies, handleVoiceNotes, handleTrends, handleManualNotes, handleGenerate, handleTrendSources, handleCrawl, handleDigestRoute, handleScheduler, handleTemplates, handleAdhoc, handleAssets, handleDocuments, handleStats, handleSettings, handleUsers, handleAllowedEmails, handlePodcasts, handleAdminTemplates, handleMeetings, handleBackfill, handleTags, handleAssetTags, handleEnrichment } from './api';
 import { startScheduler } from './services/scheduler';
 import { validateAuth, sendUnauthorized, isPublicPath, setRequestUserId, setRequestUserRole } from './middleware/auth';
 import { getDb } from './services/db';
@@ -157,6 +157,11 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   if (pathname.startsWith('/api/templates')) {
     return handleTemplates(req, res, pathname);
+  }
+
+  // Asset enrichment route
+  if (pathname.match(/\/api\/assets\/[^/]+\/enrich$/)) {
+    return handleEnrichment(req, res, pathname);
   }
 
   // Asset tags must come before assets route (more specific path)

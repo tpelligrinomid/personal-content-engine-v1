@@ -40,6 +40,8 @@ export interface UserSettings {
   voice_tone: string | null;
   unique_angle: string | null;
   signature_elements: string | null;
+  // Publishing
+  publishing_website_url: string | null;
   created_at: string;
   updated_at: string;
 }
