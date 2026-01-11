@@ -24,6 +24,7 @@ interface ApiResponse<T = unknown> {
 
 interface AdhocRequest {
   extraction_ids?: string[];
+  asset_ids?: string[];
   formats: string[];
   instructions?: string;
 }
@@ -60,11 +61,12 @@ function validateRequest(body: unknown): body is AdhocRequest {
     return false;
   }
 
-  // Either extraction_ids OR instructions must be provided
+  // At least one source must be provided: extraction_ids, asset_ids, or instructions
   const hasExtractions = Array.isArray(obj.extraction_ids) && obj.extraction_ids.length > 0;
+  const hasAssets = Array.isArray(obj.asset_ids) && obj.asset_ids.length > 0;
   const hasInstructions = typeof obj.instructions === 'string' && obj.instructions.trim().length > 0;
 
-  if (!hasExtractions && !hasInstructions) {
+  if (!hasExtractions && !hasAssets && !hasInstructions) {
     return false;
   }
 
@@ -82,6 +84,13 @@ interface ExtractionWithSource {
   source_type: string | null;
 }
 
+interface SourceAsset {
+  id: string;
+  type: string;
+  title: string | null;
+  content: string;
+}
+
 function buildExtractionContext(extractions: ExtractionWithSource[]): string {
   return extractions
     .map((e, i) => {
@@ -95,9 +104,20 @@ function buildExtractionContext(extractions: ExtractionWithSource[]): string {
     .join('\n\n---\n\n');
 }
 
+function buildAssetContext(assets: SourceAsset[]): string {
+  return assets
+    .map((a, i) => {
+      const typeLabel = a.type.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+      const header = `[Source ${i + 1}] ${a.title || 'Untitled'} (${typeLabel})`;
+      return `${header}\n\n${a.content}`;
+    })
+    .join('\n\n---\n\n');
+}
+
 async function generateContent(
   prompt: string,
   extractions: ExtractionWithSource[],
+  sourceAssets: SourceAsset[],
   profileContext: string,
   instructions?: string
 ): Promise<{ title: string; content: string }> {
@@ -112,19 +132,26 @@ async function generateContent(
 
   fullPrompt += prompt;
 
+  // Add source asset context if available
+  if (sourceAssets.length > 0) {
+    const assetContext = buildAssetContext(sourceAssets);
+    fullPrompt += `\n\n## Existing Content to Build From:\n\n${assetContext}`;
+  }
+
   // Add extraction context if available
   if (extractions.length > 0) {
-    const context = buildExtractionContext(extractions);
-    fullPrompt += `\n\n${context}`;
+    const extractionContext = buildExtractionContext(extractions);
+    fullPrompt += `\n\n## Additional Source Material:\n\n${extractionContext}`;
   }
 
   // Add custom instructions
+  const hasSources = extractions.length > 0 || sourceAssets.length > 0;
   if (instructions) {
-    if (extractions.length === 0) {
+    if (!hasSources) {
       // Prompt-only mode: instructions are the main content direction
       fullPrompt += `\n\n---\nContent direction and topic:\n${instructions}`;
     } else {
-      // With extractions: instructions are additional guidance
+      // With sources: instructions are additional guidance
       fullPrompt += `\n\n---\nAdditional instructions: ${instructions}`;
     }
   }
@@ -180,7 +207,7 @@ export async function handleAdhoc(
     if (!validateRequest(body)) {
       sendJson(res, 400, {
         success: false,
-        error: 'Invalid request. Required: formats (array), and either extraction_ids (array) or instructions (string)',
+        error: 'Invalid request. Required: formats (array), and at least one of: extraction_ids (array), asset_ids (array), or instructions (string)',
       });
       return;
     }
@@ -239,9 +266,34 @@ export async function handleAdhoc(
       }));
     }
 
-    // For prompt-only mode, log it
-    if (extractionsWithSource.length === 0) {
-      console.log('[Adhoc] Prompt-only generation (no extractions)');
+    // Fetch source assets if IDs provided
+    let sourceAssets: SourceAsset[] = [];
+
+    if (body.asset_ids && body.asset_ids.length > 0) {
+      const { data: assets, error: assetError } = await db
+        .from('assets')
+        .select('id, type, title, content')
+        .eq('user_id', userId)
+        .in('id', body.asset_ids);
+
+      if (assetError) {
+        sendJson(res, 500, { success: false, error: 'Failed to fetch source assets' });
+        return;
+      }
+
+      if (!assets || assets.length === 0) {
+        sendJson(res, 404, { success: false, error: 'No assets found with provided IDs' });
+        return;
+      }
+
+      sourceAssets = assets as SourceAsset[];
+      console.log(`[Adhoc] Using ${sourceAssets.length} existing assets as sources`);
+    }
+
+    // Log generation mode
+    const hasSources = extractionsWithSource.length > 0 || sourceAssets.length > 0;
+    if (!hasSources) {
+      console.log('[Adhoc] Prompt-only generation (no sources)');
     }
 
     const results: Asset[] = [];
@@ -273,7 +325,7 @@ export async function handleAdhoc(
           continue;
         }
 
-        const generated = await generateContent(prompt, extractionsWithSource, profileContext, body.instructions);
+        const generated = await generateContent(prompt, extractionsWithSource, sourceAssets, profileContext, body.instructions);
 
         // Save to assets
         const assetType = mapFormatToAssetType(format);
@@ -346,7 +398,8 @@ export async function handleAdhoc(
       data: {
         generated: results.length,
         extractions_used: extractionsWithSource.length,
-        prompt_only: extractionsWithSource.length === 0,
+        assets_used: sourceAssets.length,
+        prompt_only: !hasSources,
         errors: errors.length > 0 ? errors : undefined,
         assets: results,
       },
