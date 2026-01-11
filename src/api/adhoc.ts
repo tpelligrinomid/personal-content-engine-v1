@@ -23,7 +23,7 @@ interface ApiResponse<T = unknown> {
 }
 
 interface AdhocRequest {
-  extraction_ids: string[];
+  extraction_ids?: string[];
   formats: string[];
   instructions?: string;
 }
@@ -55,11 +55,16 @@ function validateRequest(body: unknown): body is AdhocRequest {
 
   const obj = body as Record<string, unknown>;
 
-  if (!Array.isArray(obj.extraction_ids) || obj.extraction_ids.length === 0) {
+  // formats is always required
+  if (!Array.isArray(obj.formats) || obj.formats.length === 0) {
     return false;
   }
 
-  if (!Array.isArray(obj.formats) || obj.formats.length === 0) {
+  // Either extraction_ids OR instructions must be provided
+  const hasExtractions = Array.isArray(obj.extraction_ids) && obj.extraction_ids.length > 0;
+  const hasInstructions = typeof obj.instructions === 'string' && obj.instructions.trim().length > 0;
+
+  if (!hasExtractions && !hasInstructions) {
     return false;
   }
 
@@ -97,7 +102,6 @@ async function generateContent(
   instructions?: string
 ): Promise<{ title: string; content: string }> {
   const claude = getClaudeClient();
-  const context = buildExtractionContext(extractions);
 
   // Build full prompt with profile context prepended
   let fullPrompt = '';
@@ -106,10 +110,23 @@ async function generateContent(
     fullPrompt += `${profileContext}\n`;
   }
 
-  fullPrompt += `${prompt}\n\n${context}`;
+  fullPrompt += prompt;
 
+  // Add extraction context if available
+  if (extractions.length > 0) {
+    const context = buildExtractionContext(extractions);
+    fullPrompt += `\n\n${context}`;
+  }
+
+  // Add custom instructions
   if (instructions) {
-    fullPrompt += `\n\n---\nAdditional instructions: ${instructions}`;
+    if (extractions.length === 0) {
+      // Prompt-only mode: instructions are the main content direction
+      fullPrompt += `\n\n---\nContent direction and topic:\n${instructions}`;
+    } else {
+      // With extractions: instructions are additional guidance
+      fullPrompt += `\n\n---\nAdditional instructions: ${instructions}`;
+    }
   }
 
   const response = await claude.messages.create({
@@ -163,7 +180,7 @@ export async function handleAdhoc(
     if (!validateRequest(body)) {
       sendJson(res, 400, {
         success: false,
-        error: 'Invalid request. Required: extraction_ids (array), formats (array)',
+        error: 'Invalid request. Required: formats (array), and either extraction_ids (array) or instructions (string)',
       });
       return;
     }
@@ -180,43 +197,52 @@ export async function handleAdhoc(
 
     const db = getDb();
 
-    // Fetch extractions with source info (filtered by user)
-    const { data: extractions, error: fetchError } = await db
-      .from('extractions')
-      .select(`
-        id,
-        summary,
-        key_points,
-        topics,
-        source_material_id,
-        document_id,
-        source_materials (title, type),
-        documents (title)
-      `)
-      .eq('user_id', userId)
-      .in('id', body.extraction_ids);
+    // Fetch extractions if IDs provided
+    let extractionsWithSource: ExtractionWithSource[] = [];
 
-    if (fetchError) {
-      sendJson(res, 500, { success: false, error: 'Failed to fetch extractions' });
-      return;
+    if (body.extraction_ids && body.extraction_ids.length > 0) {
+      const { data: extractions, error: fetchError } = await db
+        .from('extractions')
+        .select(`
+          id,
+          summary,
+          key_points,
+          topics,
+          source_material_id,
+          document_id,
+          source_materials (title, type),
+          documents (title)
+        `)
+        .eq('user_id', userId)
+        .in('id', body.extraction_ids);
+
+      if (fetchError) {
+        sendJson(res, 500, { success: false, error: 'Failed to fetch extractions' });
+        return;
+      }
+
+      if (!extractions || extractions.length === 0) {
+        sendJson(res, 404, { success: false, error: 'No extractions found with provided IDs' });
+        return;
+      }
+
+      // Transform extractions
+      extractionsWithSource = (extractions as any[]).map((e) => ({
+        id: e.id,
+        summary: e.summary,
+        key_points: e.key_points,
+        topics: e.topics,
+        source_material_id: e.source_material_id,
+        document_id: e.document_id,
+        source_title: e.source_materials?.title ?? e.documents?.title ?? null,
+        source_type: e.source_materials?.type ?? (e.document_id ? 'article' : null),
+      }));
     }
 
-    if (!extractions || extractions.length === 0) {
-      sendJson(res, 404, { success: false, error: 'No extractions found with provided IDs' });
-      return;
+    // For prompt-only mode, log it
+    if (extractionsWithSource.length === 0) {
+      console.log('[Adhoc] Prompt-only generation (no extractions)');
     }
-
-    // Transform extractions
-    const extractionsWithSource: ExtractionWithSource[] = (extractions as any[]).map((e) => ({
-      id: e.id,
-      summary: e.summary,
-      key_points: e.key_points,
-      topics: e.topics,
-      source_material_id: e.source_material_id,
-      document_id: e.document_id,
-      source_title: e.source_materials?.title ?? e.documents?.title ?? null,
-      source_type: e.source_materials?.type ?? (e.document_id ? 'article' : null),
-    }));
 
     const results: Asset[] = [];
     const errors: string[] = [];
@@ -319,7 +345,8 @@ export async function handleAdhoc(
       success: true,
       data: {
         generated: results.length,
-        extractions_used: extractions.length,
+        extractions_used: extractionsWithSource.length,
+        prompt_only: extractionsWithSource.length === 0,
         errors: errors.length > 0 ? errors : undefined,
         assets: results,
       },
