@@ -334,9 +334,32 @@ Favorite tags appear in the quick-access bar at the top of the Content page:
 | Setting | Description |
 |---------|-------------|
 | **Crawl Schedule** | How often to fetch new articles (manual, daily, every 6 hours) |
-| **Generation Schedule** | Auto-generation frequency (manual, daily, weekly) |
-| **Content Formats** | Default formats for auto-generation |
 | **Timezone** | Your local timezone for scheduling |
+
+### Auto-Generation Settings
+
+Thoughtful™ can automatically generate content on a schedule, so you wake up to fresh drafts ready for review.
+
+| Setting | Description |
+|---------|-------------|
+| **Auto-Generate Toggle** | Enable/disable automatic content generation |
+| **Frequency** | When to generate: Daily, Weekly (Sunday), or Weekly (Monday) |
+| **Time of Day** | What time to run (e.g., 08:00 AM) |
+| **Content Formats** | Which formats to generate (Newsletter, Blog Post, LinkedIn Post, etc.) |
+
+**How Auto-Generation Works:**
+
+1. At the scheduled time, Thoughtful™ gathers your **10 most recent extractions** from the past 7 days
+2. Uses your **content profile** (voice, tone, pillars) to maintain your style
+3. Generates one piece of content for **each selected format**
+4. Creates them as **drafts** for you to review and edit
+
+**Best Practices for Auto-Generation:**
+
+- Keep your content sources active so there's fresh material to draw from
+- Review and edit auto-generated content before publishing
+- Select 2-3 formats max to avoid overwhelming yourself with drafts
+- Set the time for early morning so content is ready when you start your day
 
 ### Content Profile
 

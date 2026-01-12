@@ -149,6 +149,23 @@ Draft → Ready → Published → Archived
 
 ---
 
+## Auto-Generation
+
+Set it and forget it - wake up to fresh content drafts!
+
+| Setting | Options |
+|---------|---------|
+| **Frequency** | Daily, Weekly (Sunday), Weekly (Monday) |
+| **Time** | Any hour (e.g., 08:00 AM) |
+| **Formats** | Select which content types to auto-generate |
+
+**What happens:**
+1. Gathers 10 most recent extractions (past 7 days)
+2. Generates each selected format using your profile
+3. Creates drafts for you to review
+
+---
+
 ## Settings Checklist
 
 - [ ] Content profile complete
@@ -156,6 +173,7 @@ Draft → Ready → Published → Archived
 - [ ] Crawl schedule configured
 - [ ] At least 5 content sources added
 - [ ] Favorite tags created
+- [ ] Auto-generation configured (optional)
 
 ---
 
