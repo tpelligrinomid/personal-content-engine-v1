@@ -454,9 +454,20 @@ interface UserSettingsForGeneration {
  * Check if a user should run auto-generation based on their schedule
  */
 function shouldGenerateForUser(settings: UserSettingsForGeneration): boolean {
-  if (!settings.generation_enabled) return false;
-  if (!settings.generation_schedule || settings.generation_schedule === 'manual') return false;
-  if (!settings.content_formats || settings.content_formats.length === 0) return false;
+  const userId = settings.user_id;
+
+  if (!settings.generation_enabled) {
+    console.log(`[Scheduler] User ${userId}: generation_enabled is false`);
+    return false;
+  }
+  if (!settings.generation_schedule || settings.generation_schedule === 'manual') {
+    console.log(`[Scheduler] User ${userId}: generation_schedule is '${settings.generation_schedule}'`);
+    return false;
+  }
+  if (!settings.content_formats || settings.content_formats.length === 0) {
+    console.log(`[Scheduler] User ${userId}: no content_formats selected`);
+    return false;
+  }
 
   const userTz = settings.timezone || 'America/New_York';
   const now = new Date();
@@ -466,12 +477,19 @@ function shouldGenerateForUser(settings: UserSettingsForGeneration): boolean {
   const currentHour = userNow.getHours();
   const currentDay = userNow.getDay(); // 0 = Sunday, 1 = Monday, etc.
 
-  // Parse generation_time (e.g., "08:00")
+  // Parse generation_time (e.g., "08:00" or "08:00 AM")
   const generationTime = settings.generation_time || '08:00';
-  const [targetHour] = generationTime.split(':').map(Number);
+  // Handle both "08:00" and "08:00 AM" formats
+  const timeMatch = generationTime.match(/^(\d{1,2})/);
+  const targetHour = timeMatch ? parseInt(timeMatch[1], 10) : 8;
 
-  // Check if we're in the right hour window (within the hour of generation_time)
-  if (currentHour !== targetHour) {
+  console.log(`[Scheduler] User ${userId}: currentHour=${currentHour}, targetHour=${targetHour}, currentDay=${currentDay}, schedule=${settings.generation_schedule}`);
+
+  // Check if we're within 2 hours after the target time (more lenient window)
+  // This handles cases where the scheduler might have been down or delayed
+  const hoursSinceTarget = currentHour - targetHour;
+  if (hoursSinceTarget < 0 || hoursSinceTarget > 2) {
+    console.log(`[Scheduler] User ${userId}: outside generation window (hoursSinceTarget=${hoursSinceTarget})`);
     return false;
   }
 
@@ -479,10 +497,15 @@ function shouldGenerateForUser(settings: UserSettingsForGeneration): boolean {
   const schedule = settings.generation_schedule;
 
   if (schedule === 'daily') {
-    // Daily - check every day
+    // Daily - check every day, OK
   } else if (schedule === 'weekly_sunday' && currentDay !== 0) {
+    console.log(`[Scheduler] User ${userId}: weekly_sunday but today is day ${currentDay}`);
     return false;
   } else if (schedule === 'weekly_monday' && currentDay !== 1) {
+    console.log(`[Scheduler] User ${userId}: weekly_monday but today is day ${currentDay}`);
+    return false;
+  } else if (!['daily', 'weekly_sunday', 'weekly_monday'].includes(schedule)) {
+    console.log(`[Scheduler] User ${userId}: unknown schedule '${schedule}'`);
     return false;
   }
 
@@ -497,10 +520,12 @@ function shouldGenerateForUser(settings: UserSettingsForGeneration): boolean {
       lastGenLocal.getMonth() === userNow.getMonth() &&
       lastGenLocal.getDate() === userNow.getDate()
     ) {
+      console.log(`[Scheduler] User ${userId}: already generated today (last: ${settings.last_generation_at})`);
       return false; // Already generated today
     }
   }
 
+  console.log(`[Scheduler] User ${userId}: SHOULD GENERATE - all checks passed`);
   return true;
 }
 
@@ -824,6 +849,72 @@ export async function triggerManualRun(): Promise<{
     lastRunResult = { crawl, extraction };
 
     return { crawl, extraction };
+  } finally {
+    isRunning = false;
+  }
+}
+
+// Manual trigger for auto-generation - bypasses schedule check
+export async function triggerAutoGeneration(userId?: string): Promise<{
+  generated: number;
+  users: number;
+  errors: string[];
+}> {
+  if (isRunning) {
+    throw new Error('Job already running');
+  }
+
+  isRunning = true;
+  console.log(`[Scheduler] Manual auto-generation triggered${userId ? ` for user ${userId}` : ' for all users'}`);
+
+  try {
+    const db = getDb();
+
+    if (userId) {
+      // Get specific user's settings
+      const { data: settings } = await db
+        .from('user_settings')
+        .select('user_id, generation_enabled, generation_schedule, generation_time, content_formats, last_generation_at, timezone')
+        .eq('user_id', userId)
+        .single();
+
+      if (!settings) {
+        return { generated: 0, users: 0, errors: ['User settings not found'] };
+      }
+
+      // Force generation regardless of schedule
+      const formats = settings.content_formats || [];
+      if (formats.length === 0) {
+        return { generated: 0, users: 0, errors: ['No content formats selected'] };
+      }
+
+      const result = await runAutoGenerationForUser(userId, formats);
+      return { generated: result.generated, users: 1, errors: result.errors };
+    } else {
+      // Run for all users with generation enabled (bypasses schedule check)
+      const { data: usersSettings } = await db
+        .from('user_settings')
+        .select('user_id, content_formats')
+        .eq('generation_enabled', true);
+
+      if (!usersSettings || usersSettings.length === 0) {
+        return { generated: 0, users: 0, errors: ['No users with generation enabled'] };
+      }
+
+      let totalGenerated = 0;
+      const allErrors: string[] = [];
+
+      for (const settings of usersSettings) {
+        const formats = settings.content_formats || [];
+        if (formats.length === 0) continue;
+
+        const result = await runAutoGenerationForUser(settings.user_id, formats);
+        totalGenerated += result.generated;
+        allErrors.push(...result.errors);
+      }
+
+      return { generated: totalGenerated, users: usersSettings.length, errors: allErrors };
+    }
   } finally {
     isRunning = false;
   }

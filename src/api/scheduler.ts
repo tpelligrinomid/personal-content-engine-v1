@@ -6,7 +6,8 @@
  */
 
 import { IncomingMessage, ServerResponse } from 'http';
-import { getSchedulerStatus, triggerManualRun } from '../services/scheduler';
+import { getSchedulerStatus, triggerManualRun, triggerAutoGeneration } from '../services/scheduler';
+import { requireUserId } from '../middleware/auth';
 
 interface ApiResponse<T = unknown> {
   success: boolean;
@@ -56,6 +57,38 @@ async function handleTrigger(req: IncomingMessage, res: ServerResponse): Promise
   }
 }
 
+async function handleTriggerGeneration(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    const userId = requireUserId(req);
+    const status = getSchedulerStatus();
+
+    if (status.isRunning) {
+      sendJson(res, 409, { success: false, error: 'Scheduler job already running' });
+      return;
+    }
+
+    console.log(`[Scheduler API] Manual auto-generation triggered by user ${userId}`);
+
+    // Run synchronously so we can return results
+    const result = await triggerAutoGeneration(userId);
+
+    sendJson(res, 200, {
+      success: true,
+      data: {
+        message: `Generated ${result.generated} assets`,
+        generated: result.generated,
+        errors: result.errors.length > 0 ? result.errors : undefined,
+      },
+    });
+  } catch (err) {
+    console.error('Error triggering auto-generation:', err);
+    sendJson(res, 500, {
+      success: false,
+      error: err instanceof Error ? err.message : 'Internal server error',
+    });
+  }
+}
+
 export async function handleScheduler(
   req: IncomingMessage,
   res: ServerResponse,
@@ -67,6 +100,11 @@ export async function handleScheduler(
 
   if (pathname === '/api/scheduler/trigger' && req.method === 'POST') {
     return handleTrigger(req, res);
+  }
+
+  // Manual trigger for auto-generation (for testing)
+  if (pathname === '/api/scheduler/generate' && req.method === 'POST') {
+    return handleTriggerGeneration(req, res);
   }
 
   sendJson(res, 404, { success: false, error: 'Not found' });
