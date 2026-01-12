@@ -11,8 +11,10 @@ import { getDb } from './db';
 import { crawlBlog, scrapePage } from './firecrawl';
 import { isRedditUrl, fetchFromRedditUrl } from './reddit';
 import { isTwitterUrl, fetchFromTwitterSource, formatTweetAsContent } from './twitter';
-import { extractFromContent, EXTRACTION_MODEL } from './claude';
-import { TrendSource, DocumentInsert, ExtractionInsert, UserSettings } from '../types';
+import { extractFromContent, EXTRACTION_MODEL, getClaudeClient } from './claude';
+import { getTemplatePrompt, isValidTemplateKey } from './templates';
+import { getProfileContextForUser } from './profile';
+import { TrendSource, DocumentInsert, ExtractionInsert, UserSettings, AssetInsert, AssetType } from '../types';
 
 // Configuration
 // Global schedule - how often the scheduler checks for work (not per-user schedule)
@@ -23,6 +25,8 @@ const TWEETS_PER_SOURCE = parseInt(process.env.TWEETS_PER_SOURCE || '50', 10);
 const EXTRACTIONS_PER_RUN = parseInt(process.env.EXTRACTIONS_PER_RUN || '10', 10);
 const DELAY_BETWEEN_SOURCES_MS = 5000; // 5 seconds between sources
 const DOCUMENT_RETENTION_DAYS = parseInt(process.env.DOCUMENT_RETENTION_DAYS || '30', 10);
+const GENERATION_MODEL = 'claude-sonnet-4-20250514';
+const EXTRACTIONS_FOR_GENERATION = 10; // Use top 10 recent extractions for auto-generation
 
 /**
  * Check if a user should be crawled based on their schedule and last crawl time
@@ -432,6 +436,311 @@ async function cleanupOldDocuments(): Promise<{ deleted: number; errors: string[
   return { deleted, errors };
 }
 
+// ============================================
+// AUTO-GENERATION
+// ============================================
+
+interface UserSettingsForGeneration {
+  user_id: string;
+  generation_enabled: boolean;
+  generation_schedule: string | null;
+  generation_time: string | null;
+  content_formats: string[] | null;
+  last_generation_at: string | null;
+  timezone: string | null;
+}
+
+/**
+ * Check if a user should run auto-generation based on their schedule
+ */
+function shouldGenerateForUser(settings: UserSettingsForGeneration): boolean {
+  if (!settings.generation_enabled) return false;
+  if (!settings.generation_schedule || settings.generation_schedule === 'manual') return false;
+  if (!settings.content_formats || settings.content_formats.length === 0) return false;
+
+  const userTz = settings.timezone || 'America/New_York';
+  const now = new Date();
+
+  // Get current time in user's timezone
+  const userNow = new Date(now.toLocaleString('en-US', { timeZone: userTz }));
+  const currentHour = userNow.getHours();
+  const currentDay = userNow.getDay(); // 0 = Sunday, 1 = Monday, etc.
+
+  // Parse generation_time (e.g., "08:00")
+  const generationTime = settings.generation_time || '08:00';
+  const [targetHour] = generationTime.split(':').map(Number);
+
+  // Check if we're in the right hour window (within the hour of generation_time)
+  if (currentHour !== targetHour) {
+    return false;
+  }
+
+  // Check if schedule matches today
+  const schedule = settings.generation_schedule;
+
+  if (schedule === 'daily') {
+    // Daily - check every day
+  } else if (schedule === 'weekly_sunday' && currentDay !== 0) {
+    return false;
+  } else if (schedule === 'weekly_monday' && currentDay !== 1) {
+    return false;
+  }
+
+  // Check if we already generated today
+  if (settings.last_generation_at) {
+    const lastGen = new Date(settings.last_generation_at);
+    const lastGenLocal = new Date(lastGen.toLocaleString('en-US', { timeZone: userTz }));
+
+    // Same day check
+    if (
+      lastGenLocal.getFullYear() === userNow.getFullYear() &&
+      lastGenLocal.getMonth() === userNow.getMonth() &&
+      lastGenLocal.getDate() === userNow.getDate()
+    ) {
+      return false; // Already generated today
+    }
+  }
+
+  return true;
+}
+
+interface ExtractionWithSource {
+  id: string;
+  summary: string | null;
+  key_points: string[] | null;
+  topics: string[] | null;
+  source_title: string | null;
+  source_type: string | null;
+}
+
+function buildExtractionContext(extractions: ExtractionWithSource[]): string {
+  return extractions
+    .map((e, i) => {
+      const header = `[${i + 1}] ${e.source_title || 'Untitled'} (${e.source_type || 'unknown'})`;
+      const summary = e.summary || '';
+      const keyPoints = e.key_points?.map((p) => `  - ${p}`).join('\n') || '';
+      const topics = e.topics?.join(', ') || '';
+
+      return `${header}\nSummary: ${summary}\nKey Points:\n${keyPoints}\nTopics: ${topics}`;
+    })
+    .join('\n\n---\n\n');
+}
+
+function mapFormatToAssetType(format: string): AssetType | null {
+  const mapping: Record<string, AssetType> = {
+    linkedin_post: 'linkedin_post',
+    linkedin_pov: 'linkedin_post',
+    twitter_post: 'twitter_post',
+    twitter_thread: 'twitter_post',
+    blog_post: 'blog_post',
+    newsletter: 'newsletter',
+    video_script: 'video_script',
+    podcast_segment: 'podcast_segment',
+  };
+
+  return mapping[format] || null;
+}
+
+async function generateContentForFormat(
+  prompt: string,
+  extractions: ExtractionWithSource[],
+  profileContext: string
+): Promise<{ title: string; content: string }> {
+  const claude = getClaudeClient();
+
+  let fullPrompt = '';
+
+  if (profileContext) {
+    fullPrompt += `${profileContext}\n`;
+  }
+
+  fullPrompt += prompt;
+
+  if (extractions.length > 0) {
+    const extractionContext = buildExtractionContext(extractions);
+    fullPrompt += `\n\n## Source Material:\n\n${extractionContext}`;
+  }
+
+  fullPrompt += '\n\n---\nGenerate content based on the most interesting and relevant insights from the source material above.';
+
+  const response = await claude.messages.create({
+    model: GENERATION_MODEL,
+    max_tokens: 4000,
+    messages: [{ role: 'user', content: fullPrompt }],
+  });
+
+  const textBlock = response.content.find((block) => block.type === 'text');
+  if (!textBlock || textBlock.type !== 'text') {
+    throw new Error('No text response from Claude');
+  }
+
+  const jsonMatch = textBlock.text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error('Could not parse JSON from response');
+  }
+
+  const parsed = JSON.parse(jsonMatch[0]) as { title: string; content: string };
+
+  if (!parsed.title || !parsed.content) {
+    throw new Error('Invalid response format');
+  }
+
+  return parsed;
+}
+
+async function runAutoGenerationForUser(userId: string, formats: string[]): Promise<{ generated: number; errors: string[] }> {
+  const db = getDb();
+  const errors: string[] = [];
+  let generated = 0;
+
+  console.log(`[Scheduler] Running auto-generation for user ${userId} with formats: ${formats.join(', ')}`);
+
+  // Get recent extractions (from the past 7 days)
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+  const { data: extractions, error: fetchError } = await db
+    .from('extractions')
+    .select(`
+      id,
+      summary,
+      key_points,
+      topics,
+      source_material_id,
+      document_id,
+      source_materials (title, type),
+      documents (title)
+    `)
+    .eq('user_id', userId)
+    .gte('created_at', sevenDaysAgo.toISOString())
+    .order('created_at', { ascending: false })
+    .limit(EXTRACTIONS_FOR_GENERATION);
+
+  if (fetchError) {
+    console.error(`[Scheduler] Failed to fetch extractions for user ${userId}:`, fetchError);
+    return { generated: 0, errors: ['Failed to fetch extractions'] };
+  }
+
+  if (!extractions || extractions.length === 0) {
+    console.log(`[Scheduler] No recent extractions for user ${userId}, skipping generation`);
+    return { generated: 0, errors: [] };
+  }
+
+  // Transform extractions
+  const extractionsWithSource: ExtractionWithSource[] = (extractions as any[]).map((e) => ({
+    id: e.id,
+    summary: e.summary,
+    key_points: e.key_points,
+    topics: e.topics,
+    source_title: e.source_materials?.title ?? e.documents?.title ?? null,
+    source_type: e.source_materials?.type ?? (e.document_id ? 'article' : null),
+  }));
+
+  console.log(`[Scheduler] Using ${extractionsWithSource.length} extractions for generation`);
+
+  // Get user's content profile
+  const profileContext = await getProfileContextForUser(userId);
+
+  // Generate each format
+  for (const format of formats) {
+    try {
+      if (!isValidTemplateKey(format)) {
+        console.log(`[Scheduler] Skipping invalid format: ${format}`);
+        continue;
+      }
+
+      console.log(`[Scheduler] Generating ${format}...`);
+
+      const prompt = await getTemplatePrompt(format, userId);
+      if (!prompt) {
+        errors.push(`${format}: Template not found`);
+        continue;
+      }
+
+      const result = await generateContentForFormat(prompt, extractionsWithSource, profileContext);
+
+      // Save to assets
+      const assetType = mapFormatToAssetType(format);
+      if (!assetType) {
+        errors.push(`${format}: Unknown asset type mapping`);
+        continue;
+      }
+
+      const insert: AssetInsert = {
+        user_id: userId,
+        type: assetType,
+        title: result.title,
+        content: result.content,
+        status: 'draft',
+        publish_date: null,
+        published_url: null,
+      };
+
+      const { data: asset, error: insertError } = await db
+        .from('assets')
+        .insert(insert)
+        .select()
+        .single();
+
+      if (insertError) {
+        errors.push(`${format}: ${insertError.message}`);
+        continue;
+      }
+
+      generated++;
+      console.log(`[Scheduler] Created ${format}: ${asset.id}`);
+    } catch (err) {
+      const msg = `${format}: ${err instanceof Error ? err.message : 'Unknown error'}`;
+      console.error(`[Scheduler] Generation error:`, msg);
+      errors.push(msg);
+    }
+  }
+
+  // Update last_generation_at
+  await db
+    .from('user_settings')
+    .update({ last_generation_at: new Date().toISOString() })
+    .eq('user_id', userId);
+
+  return { generated, errors };
+}
+
+async function runAutoGeneration(): Promise<{ generated: number; users: number; errors: string[] }> {
+  const db = getDb();
+  const allErrors: string[] = [];
+  let totalGenerated = 0;
+  let usersProcessed = 0;
+
+  // Get all users with generation settings
+  const { data: usersSettings } = await db
+    .from('user_settings')
+    .select('user_id, generation_enabled, generation_schedule, generation_time, content_formats, last_generation_at, timezone')
+    .eq('generation_enabled', true);
+
+  if (!usersSettings || usersSettings.length === 0) {
+    console.log('[Scheduler] No users with auto-generation enabled');
+    return { generated: 0, users: 0, errors: [] };
+  }
+
+  for (const settings of usersSettings as UserSettingsForGeneration[]) {
+    if (!shouldGenerateForUser(settings)) {
+      console.log(`[Scheduler] Skipping auto-generation for user ${settings.user_id} - not due (schedule: ${settings.generation_schedule}, time: ${settings.generation_time}, last: ${settings.last_generation_at})`);
+      continue;
+    }
+
+    console.log(`[Scheduler] User ${settings.user_id} is due for auto-generation`);
+
+    const formats = settings.content_formats || [];
+    const result = await runAutoGenerationForUser(settings.user_id, formats);
+
+    totalGenerated += result.generated;
+    usersProcessed++;
+    allErrors.push(...result.errors);
+  }
+
+  return { generated: totalGenerated, users: usersProcessed, errors: allErrors };
+}
+
 async function runScheduledJob(): Promise<void> {
   if (isRunning) {
     console.log('[Scheduler] Job already running, skipping...');
@@ -450,7 +759,13 @@ async function runScheduledJob(): Promise<void> {
     const extractResult = await runExtractions();
     console.log(`[Scheduler] Extraction complete: ${extractResult.extracted} new extractions`);
 
-    // Step 3: Clean up old documents (runs daily)
+    // Step 3: Run auto-generation (checks each user's schedule)
+    const generationResult = await runAutoGeneration();
+    if (generationResult.generated > 0) {
+      console.log(`[Scheduler] Auto-generation complete: ${generationResult.generated} assets for ${generationResult.users} users`);
+    }
+
+    // Step 4: Clean up old documents (runs daily)
     const cleanupResult = await cleanupOldDocuments();
     if (cleanupResult.deleted > 0) {
       console.log(`[Scheduler] Cleanup complete: ${cleanupResult.deleted} old documents removed`);
