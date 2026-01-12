@@ -98,17 +98,15 @@ async function handleUpsert(
 
     const db = getDb();
 
-    // Check if override exists for this user
+    // Check if override exists for this user (use maybeSingle to avoid error on no rows)
     const { data: existing } = await db
       .from('templates')
       .select('id')
       .eq('user_id', userId)
       .eq('template_key', key)
-      .single();
+      .maybeSingle();
 
-    const insert: TemplateInsert = {
-      user_id: userId,
-      template_key: key,
+    const templateData = {
       name: (body.name as string) || key,
       description: (body.description as string) || null,
       prompt: body.prompt,
@@ -116,19 +114,15 @@ async function handleUpsert(
     };
 
     let result;
+    let isUpdate = false;
 
     if (existing) {
-      // Update existing
+      // Update existing user override
+      isUpdate = true;
       const { data, error } = await db
         .from('templates')
-        .update({
-          name: insert.name,
-          description: insert.description,
-          prompt: insert.prompt,
-          active: insert.active,
-        })
-        .eq('user_id', userId)
-        .eq('template_key', key)
+        .update(templateData)
+        .eq('id', existing.id)
         .select()
         .single();
 
@@ -138,7 +132,13 @@ async function handleUpsert(
       }
       result = data;
     } else {
-      // Insert new
+      // Insert new user override
+      const insert: TemplateInsert = {
+        user_id: userId,
+        template_key: key,
+        ...templateData,
+      };
+
       const { data, error } = await db
         .from('templates')
         .insert(insert)
@@ -146,6 +146,16 @@ async function handleUpsert(
         .single();
 
       if (error) {
+        // If unique constraint error, the DB constraint might be wrong
+        // Try to provide helpful error message
+        if (error.message.includes('unique constraint')) {
+          console.error(`[Templates] Unique constraint error for user ${userId}, key ${key}. Check DB constraint.`);
+          sendJson(res, 500, {
+            success: false,
+            error: 'Template constraint error. The database may need a migration to support per-user templates.'
+          });
+          return;
+        }
         sendJson(res, 500, { success: false, error: error.message });
         return;
       }
@@ -156,7 +166,7 @@ async function handleUpsert(
       success: true,
       data: {
         ...result,
-        message: existing ? 'Template override updated' : 'Template override created',
+        message: isUpdate ? 'Template override updated' : 'Template override created',
       },
     });
   } catch (err) {
