@@ -2,6 +2,7 @@
  * Assets API
  *
  * GET    /api/assets          - List all assets (filter by type, status)
+ * POST   /api/assets          - Create new asset (for adding existing content)
  * GET    /api/assets/:id      - Get single asset with inputs
  * PATCH  /api/assets/:id      - Update asset (status, title, content)
  * DELETE /api/assets/:id      - Delete asset
@@ -10,7 +11,7 @@
 import { IncomingMessage, ServerResponse } from 'http';
 import { getDb } from '../services/db';
 import { requireUserId } from '../middleware/auth';
-import { Asset } from '../types';
+import { Asset, AssetType, AssetStatus } from '../types';
 
 interface ApiResponse<T = unknown> {
   success: boolean;
@@ -149,6 +150,94 @@ async function handleList(req: IncomingMessage, res: ServerResponse): Promise<vo
     });
   } catch (err) {
     console.error('Error listing assets:', err);
+    sendJson(res, 500, {
+      success: false,
+      error: err instanceof Error ? err.message : 'Internal server error',
+    });
+  }
+}
+
+interface CreateAssetRequest {
+  type: AssetType;
+  title: string;
+  content: string;
+  status?: AssetStatus;
+  publish_date?: string | null;
+  published_url?: string | null;
+}
+
+const VALID_ASSET_TYPES: AssetType[] = [
+  'linkedin_post',
+  'twitter_post',
+  'blog_post',
+  'newsletter',
+  'video_script',
+  'podcast_segment',
+];
+
+const VALID_STATUSES: AssetStatus[] = ['draft', 'ready', 'published', 'archived'];
+
+async function handleCreate(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    const userId = requireUserId(req);
+    const body = (await parseBody(req)) as CreateAssetRequest;
+
+    // Validate required fields
+    if (!body.type || !body.title || !body.content) {
+      sendJson(res, 400, {
+        success: false,
+        error: 'Required fields: type, title, content',
+      });
+      return;
+    }
+
+    // Validate type
+    if (!VALID_ASSET_TYPES.includes(body.type)) {
+      sendJson(res, 400, {
+        success: false,
+        error: `Invalid type. Must be one of: ${VALID_ASSET_TYPES.join(', ')}`,
+      });
+      return;
+    }
+
+    // Validate status if provided
+    const status = body.status || 'draft';
+    if (!VALID_STATUSES.includes(status)) {
+      sendJson(res, 400, {
+        success: false,
+        error: `Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`,
+      });
+      return;
+    }
+
+    const db = getDb();
+
+    const insert = {
+      user_id: userId,
+      type: body.type,
+      title: body.title,
+      content: body.content,
+      status,
+      publish_date: body.publish_date || null,
+      published_url: body.published_url || null,
+    };
+
+    const { data: asset, error } = await db
+      .from('assets')
+      .insert(insert)
+      .select()
+      .single();
+
+    if (error) {
+      sendJson(res, 500, { success: false, error: error.message });
+      return;
+    }
+
+    console.log(`[Assets] Created new asset: ${asset.id} (${body.type})`);
+
+    sendJson(res, 201, { success: true, data: asset });
+  } catch (err) {
+    console.error('Error creating asset:', err);
     sendJson(res, 500, {
       success: false,
       error: err instanceof Error ? err.message : 'Internal server error',
@@ -335,6 +424,11 @@ export async function handleAssets(
   // List all assets
   if (pathname === '/api/assets' && req.method === 'GET') {
     return handleList(req, res);
+  }
+
+  // Create new asset (for adding existing content)
+  if (pathname === '/api/assets' && req.method === 'POST') {
+    return handleCreate(req, res);
   }
 
   // Single asset operations
