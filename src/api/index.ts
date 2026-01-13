@@ -24,3 +24,4 @@ export { handlePodcasts } from './podcasts';
 export { handleAdminTemplates } from './admin-templates';
 export { handleMeetings } from './meetings';
 export { handleBackfill } from './backfill';
+export { handleIdeas } from './ideas';
