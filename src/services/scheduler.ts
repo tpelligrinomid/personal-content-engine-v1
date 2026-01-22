@@ -25,7 +25,7 @@ const TWEETS_PER_SOURCE = parseInt(process.env.TWEETS_PER_SOURCE || '50', 10);
 const EXTRACTIONS_PER_RUN = parseInt(process.env.EXTRACTIONS_PER_RUN || '10', 10);
 const DELAY_BETWEEN_SOURCES_MS = 5000; // 5 seconds between sources
 const DOCUMENT_RETENTION_DAYS = parseInt(process.env.DOCUMENT_RETENTION_DAYS || '30', 10);
-const GENERATION_MODEL = 'claude-sonnet-4-20250514';
+const GENERATION_MODEL = 'claude-opus-4-5-20251101';
 const EXTRACTIONS_FOR_GENERATION = 10; // Use top 10 recent extractions for auto-generation
 
 /**

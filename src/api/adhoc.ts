@@ -14,7 +14,7 @@ import { getTemplatePrompt, isValidTemplateKey } from '../services/templates';
 import { getProfileContextForUser } from '../services/profile';
 import { Asset, AssetInsert, AssetInputInsert, Extraction } from '../types';
 
-const GENERATION_MODEL = 'claude-sonnet-4-20250514';
+const GENERATION_MODEL = 'claude-opus-4-5-20251101';
 
 interface ApiResponse<T = unknown> {
   success: boolean;
