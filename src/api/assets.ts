@@ -12,6 +12,8 @@ import { IncomingMessage, ServerResponse } from 'http';
 import { getDb } from '../services/db';
 import { requireUserId } from '../middleware/auth';
 import { Asset, AssetType, AssetStatus } from '../types';
+import { getClaudeClient } from '../services/claude';
+import { getProfileContextForUser } from '../services/profile';
 
 interface ApiResponse<T = unknown> {
   success: boolean;
@@ -414,12 +416,159 @@ async function handleDelete(
   }
 }
 
+// ============================================================================
+// Content Improvement
+// ============================================================================
+
+interface ImproveAssetRequest {
+  content: string;
+  content_type: string;
+  custom_prompt: string;
+  title?: string;
+}
+
+function buildImprovementPrompt(
+  content: string,
+  contentType: string,
+  customPrompt: string,
+  title?: string
+): string {
+  const titleContext = title ? `\nTITLE: ${title}` : '';
+
+  return `You are an expert content editor specializing in ${contentType} optimization.
+
+Your task is to improve the following content based on the user's specific instructions.
+
+INSTRUCTIONS FROM USER:
+${customPrompt}
+${titleContext}
+
+ORIGINAL CONTENT:
+${content}
+
+RULES:
+1. Apply ONLY the changes requested by the user
+2. Maintain the author's voice and core message
+3. Keep the content appropriate for the platform (${contentType})
+4. For LinkedIn: Stay under 3,000 characters; preserve line breaks for readability
+5. Return ONLY the improved content, no explanations or preamble`;
+}
+
+async function handleImprove(
+  req: IncomingMessage,
+  res: ServerResponse,
+  id: string
+): Promise<void> {
+  try {
+    const userId = requireUserId(req);
+    const body = (await parseBody(req)) as ImproveAssetRequest;
+
+    // Validate custom_prompt is provided
+    if (!body.custom_prompt || !body.custom_prompt.trim()) {
+      sendJson(res, 400, {
+        success: false,
+        error: 'custom_prompt is required',
+      });
+      return;
+    }
+
+    const db = getDb();
+
+    // Fetch the asset
+    const { data: asset, error: assetError } = await db
+      .from('assets')
+      .select('id, type, title, content')
+      .eq('id', id)
+      .eq('user_id', userId)
+      .single();
+
+    if (assetError || !asset) {
+      sendJson(res, 404, { success: false, error: 'Asset not found' });
+      return;
+    }
+
+    // Use provided content or fall back to asset content
+    const contentToImprove = body.content || asset.content;
+    const contentType = body.content_type || asset.type;
+    const title = body.title || asset.title;
+
+    console.log(`[Improve] Starting improvement for asset ${id} (${contentType})`);
+
+    // Get user profile context for maintaining voice
+    const profileContext = await getProfileContextForUser(userId);
+
+    // Build the full prompt
+    const improvementPrompt = buildImprovementPrompt(
+      contentToImprove,
+      contentType,
+      body.custom_prompt,
+      title
+    );
+
+    let fullPrompt = '';
+    if (profileContext) {
+      fullPrompt = `${profileContext}\n${improvementPrompt}`;
+      console.log('[Improve] Using content profile for voice consistency');
+    } else {
+      fullPrompt = improvementPrompt;
+    }
+
+    // Call Claude for improvement
+    const claude = getClaudeClient();
+    const response = await claude.messages.create({
+      model: 'claude-opus-4-5-20250514',
+      max_tokens: 4000,
+      messages: [
+        {
+          role: 'user',
+          content: fullPrompt,
+        },
+      ],
+    });
+
+    const textBlock = response.content.find((block) => block.type === 'text');
+    if (!textBlock || textBlock.type !== 'text') {
+      throw new Error('No text response from Claude');
+    }
+
+    const improvedContent = textBlock.text.trim();
+
+    console.log(`[Improve] Successfully improved asset ${id}`);
+
+    sendJson(res, 200, {
+      success: true,
+      data: {
+        improved_content: improvedContent,
+        original_content: contentToImprove,
+      },
+    });
+  } catch (err) {
+    console.error('[Improve] Error:', err);
+    sendJson(res, 500, {
+      success: false,
+      error: err instanceof Error ? err.message : 'Internal server error',
+    });
+  }
+}
+
+// ============================================================================
+// Main Router
+// ============================================================================
+
 export async function handleAssets(
   req: IncomingMessage,
   res: ServerResponse,
   pathname: string
 ): Promise<void> {
   const id = extractIdFromPath(pathname);
+
+  // Asset improvement endpoint (must come before other single-asset operations)
+  if (pathname.match(/\/api\/assets\/[^/]+\/improve$/) && req.method === 'POST') {
+    const improveId = pathname.match(/\/api\/assets\/([^/]+)\/improve$/)?.[1];
+    if (improveId) {
+      return handleImprove(req, res, improveId);
+    }
+  }
 
   // List all assets
   if (pathname === '/api/assets' && req.method === 'GET') {
