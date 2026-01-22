@@ -14,6 +14,7 @@ import { requireUserId } from '../middleware/auth';
 import { Asset, AssetType, AssetStatus } from '../types';
 import { getClaudeClient } from '../services/claude';
 import { getProfileContextForUser } from '../services/profile';
+import { GENERATION_MODEL } from '../services/generate';
 
 interface ApiResponse<T = unknown> {
   success: boolean;
@@ -516,7 +517,7 @@ async function handleImprove(
     // Call Claude for improvement
     const claude = getClaudeClient();
     const response = await claude.messages.create({
-      model: 'claude-opus-4-5-20250514',
+      model: GENERATION_MODEL,
       max_tokens: 4000,
       messages: [
         {
