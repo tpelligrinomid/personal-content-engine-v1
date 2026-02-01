@@ -314,76 +314,80 @@ export async function handleAdhoc(
       console.log('[Adhoc] Using content profile for generation');
     }
 
-    // Generate each format
-    for (const format of body.formats) {
-      try {
-        console.log(`[Adhoc] Generating ${format}...`);
+    // Generate all formats in parallel to avoid client timeout
+    const generateOne = async (format: string): Promise<void> => {
+      console.log(`[Adhoc] Generating ${format}...`);
 
-        const prompt = await getTemplatePrompt(format, userId);
-        if (!prompt) {
-          errors.push(`${format}: Template not found`);
-          continue;
-        }
+      const prompt = await getTemplatePrompt(format, userId);
+      if (!prompt) {
+        errors.push(`${format}: Template not found`);
+        return;
+      }
 
-        const generated = await generateContent(prompt, extractionsWithSource, sourceAssets, profileContext, body.instructions);
+      const generated = await generateContent(prompt, extractionsWithSource, sourceAssets, profileContext, body.instructions);
 
-        // Save to assets
-        const assetType = mapFormatToAssetType(format);
-        if (!assetType) {
-          errors.push(`${format}: Unknown asset type mapping`);
-          continue;
-        }
+      // Save to assets
+      const assetType = mapFormatToAssetType(format);
+      if (!assetType) {
+        errors.push(`${format}: Unknown asset type mapping`);
+        return;
+      }
 
-        const insert: AssetInsert = {
+      const insert: AssetInsert = {
+        user_id: userId,
+        type: assetType,
+        title: generated.title,
+        content: generated.content,
+        status: 'draft',
+        publish_date: null,
+        published_url: null,
+      };
+
+      const { data: asset, error: insertError } = await db
+        .from('assets')
+        .insert(insert)
+        .select()
+        .single();
+
+      if (insertError) {
+        errors.push(`${format}: ${insertError.message}`);
+        return;
+      }
+
+      // Create provenance links
+      if (sourceIds.length > 0) {
+        const smInputs: AssetInputInsert[] = sourceIds.map((smId) => ({
           user_id: userId,
-          type: assetType,
-          title: generated.title,
-          content: generated.content,
-          status: 'draft',
-          publish_date: null,
-          published_url: null,
-        };
+          asset_id: asset.id,
+          source_material_id: smId,
+          document_id: null,
+          note: `Generated via adhoc (${format})`,
+        }));
+        await db.from('asset_inputs').insert(smInputs);
+      }
 
-        const { data: asset, error: insertError } = await db
-          .from('assets')
-          .insert(insert)
-          .select()
-          .single();
+      if (documentIds.length > 0) {
+        const docInputs: AssetInputInsert[] = documentIds.map((docId) => ({
+          user_id: userId,
+          asset_id: asset.id,
+          source_material_id: null,
+          document_id: docId,
+          note: `Generated via adhoc (${format})`,
+        }));
+        await db.from('asset_inputs').insert(docInputs);
+      }
 
-        if (insertError) {
-          errors.push(`${format}: ${insertError.message}`);
-          continue;
-        }
+      results.push(asset as Asset);
+      console.log(`[Adhoc] Created ${format}: ${asset.id}`);
+    };
 
-        // Create provenance links
-        if (sourceIds.length > 0) {
-          const smInputs: AssetInputInsert[] = sourceIds.map((smId) => ({
-            user_id: userId,
-            asset_id: asset.id,
-            source_material_id: smId,
-            document_id: null,
-            note: `Generated via adhoc (${format})`,
-          }));
-          await db.from('asset_inputs').insert(smInputs);
-        }
-
-        if (documentIds.length > 0) {
-          const docInputs: AssetInputInsert[] = documentIds.map((docId) => ({
-            user_id: userId,
-            asset_id: asset.id,
-            source_material_id: null,
-            document_id: docId,
-            note: `Generated via adhoc (${format})`,
-          }));
-          await db.from('asset_inputs').insert(docInputs);
-        }
-
-        results.push(asset as Asset);
-        console.log(`[Adhoc] Created ${format}: ${asset.id}`);
+    await Promise.all(body.formats.map(async (format) => {
+      try {
+        await generateOne(format);
       } catch (err) {
         errors.push(`${format}: ${err instanceof Error ? err.message : 'Unknown error'}`);
       }
-    }
+    }));
 
     // Update last_generation_at if we generated any content
     if (results.length > 0) {

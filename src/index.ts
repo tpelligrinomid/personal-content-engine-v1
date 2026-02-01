@@ -221,8 +221,11 @@ async function main() {
   const server = createServer((req, res) => {
     handleRequest(req, res).catch((err) => {
       console.error('Unhandled error:', err);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: 'Internal server error' }));
+      if (!res.headersSent) {
+        setCorsHeaders(req, res);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Internal server error' }));
+      }
     });
   });
 
